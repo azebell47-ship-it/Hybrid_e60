@@ -67,8 +67,11 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
     @Override public void surfaceCreated(SurfaceHolder holder) {
         try {
-            Filament.init();
-            engine = Engine.create();
+            
+Filament.init();
+com.google.android.filament.gltfio.Gltfio.init();
+engine = Engine.create();
+
             renderer = engine.createRenderer();
             scene = engine.createScene();
             view = engine.createView();
