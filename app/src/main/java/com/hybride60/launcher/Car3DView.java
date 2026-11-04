@@ -148,7 +148,9 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
     private void drawFrame() {
         if (engine == null || swapChain == null) return;
-        if (renderer.beginFrame(swapChain)) {
+        
+if (renderer.beginFrame(swapChain, System.nanoTime())) {
+
             renderer.render(view);
             renderer.endFrame();
         }
