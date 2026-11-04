@@ -79,6 +79,7 @@ engine = Engine.create();
             camera = engine.createCamera(cameraEntity);
             view.setCamera(camera);
             view.setScene(scene);
+view.setBlendMode(View.BlendMode.OPAQUE);
 // Fond noir opaque
 setZOrderOnTop(false);
 getHolder().setFormat(
@@ -90,8 +91,7 @@ view.setBlendMode(View.BlendMode.OPAQUE);
 
 // Effacement du fond à chaque frame
 renderer.setClearOptions(
-    new Renderer.ClearOptions()
-);
+    new view.setRenderTarget(null);
             lightEntity = EntityManager.get().create();
             new LightManager.Builder(LightManager.Type.SUN)
                     .color(1f, 1f, 1f)
