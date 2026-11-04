@@ -44,15 +44,9 @@ public class MainActivity extends Activity {
         gauche.addView(info("BATTERIE", "-- V"));
         gauche.addView(info("TURBO", "-- bar"));
 
-        TextView voiture = texte(
-            "BMW E60 530d\n\n" +
-            "ZONE 3D\n\n" +
-            "Vue trois quarts\n" +
-            "Rotation tactile à venir",
-            22
-        );
-        voiture.setGravity(Gravity.CENTER);
-        voiture.setTextColor(bleu);
+        
+Car3DView voiture = new Car3DView(this);
+
 
         LinearLayout droite = colonne();
         droite.addView(info("REGIME", "-- tr/min"));
