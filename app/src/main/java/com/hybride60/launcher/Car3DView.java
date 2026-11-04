@@ -116,7 +116,7 @@ android.util.Log.i("HybridE60", "Début du chargement GLB");
 }
 
         }
-    }
+    
 
     private ByteBuffer readAsset(String name) throws Exception {
         try (InputStream in = getContext().getAssets().open(name);
