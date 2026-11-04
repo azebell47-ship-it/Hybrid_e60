@@ -7,7 +7,6 @@
         <activity
             android:name="com.hybride60.launcher.MainActivity"
             android:exported="true">
-
 android:screenOrientation="landscape"
 
             <intent-filter>
