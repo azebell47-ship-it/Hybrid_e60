@@ -88,6 +88,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
             materialProvider = new UbershaderProvider(engine);
             assetLoader = new AssetLoader(engine, materialProvider, EntityManager.get());
             resourceLoader = new ResourceLoader(engine);
+android.util.Log.i("HybridE60", "Début du chargement GLB");
             ByteBuffer glb = readAsset("bmw_m5_e60.glb");
             asset = assetLoader.createAsset(glb);
             if (asset == null) throw new IllegalStateException("GLB non reconnu");
@@ -103,8 +104,17 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
             updateCamera();
             running = true;
             Choreographer.getInstance().postFrameCallback(frameCallback);
-        } catch (Exception e) {
-            android.util.Log.e("HybridE60", "Erreur de chargement BMW M5", e);
+        
+} catch (Throwable e) {
+    android.util.Log.e("HybridE60", "Erreur Filament", e);
+    android.widget.Toast.makeText(
+        getContext(),
+        "Erreur 3D : " + e.getClass().getSimpleName()
+            + " : " + e.getMessage(),
+        android.widget.Toast.LENGTH_LONG
+    ).show();
+}
+
         }
     }
 
