@@ -1,228 +1,179 @@
-
 package com.hybride60.launcher;
 
 import android.content.Context;
-import android.opengl.GLSurfaceView;
-import android.opengl.GLES20;
-import android.opengl.Matrix;
+import android.view.Choreographer;
 import android.view.MotionEvent;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.opengl.Matrix;
 
+import com.google.android.filament.Camera;
+import com.google.android.filament.Engine;
+import com.google.android.filament.EntityManager;
+import com.google.android.filament.Filament;
+import com.google.android.filament.LightManager;
+import com.google.android.filament.Renderer;
+import com.google.android.filament.Scene;
+import com.google.android.filament.SwapChain;
+import com.google.android.filament.TransformManager;
+import com.google.android.filament.View;
+import com.google.android.filament.Viewport;
+import com.google.android.filament.gltfio.AssetLoader;
+import com.google.android.filament.gltfio.FilamentAsset;
+import com.google.android.filament.gltfio.MaterialProvider;
+import com.google.android.filament.gltfio.ResourceLoader;
+import com.google.android.filament.gltfio.UbershaderProvider;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 
-public class Car3DView extends GLSurfaceView {
+/** First Filament GLB test. Keep the old cube version on v2-3d. */
+public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
+    private Engine engine;
+    private Renderer renderer;
+    private Scene scene;
+    private View view;
+    private Camera camera;
+    private SwapChain swapChain;
+    private AssetLoader assetLoader;
+    private ResourceLoader resourceLoader;
+    private MaterialProvider materialProvider;
+    private FilamentAsset asset;
+    private int cameraEntity;
+    private int lightEntity;
 
-    private final CarRenderer renderer;
-    private float lastX;
-    private float lastY;
+    private float yaw = -30f;
+    private float pitch = 15f;
+    private float lastX, lastY;
+    private float modelScale = 1f;
+    private final float[] center = new float[3];
+    private boolean running;
+
+    private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
+        @Override public void doFrame(long frameTimeNanos) {
+            if (!running) return;
+            drawFrame();
+            Choreographer.getInstance().postFrameCallback(this);
+        }
+    };
 
     public Car3DView(Context context) {
         super(context);
-
-        setEGLContextClientVersion(2);
-
-        renderer = new CarRenderer();
-        setRenderer(renderer);
-
-        setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
+        getHolder().addCallback(this);
+        setFocusable(true);
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        float x = event.getX();
-        float y = event.getY();
+    @Override public void surfaceCreated(SurfaceHolder holder) {
+        try {
+            Filament.init();
+            engine = Engine.create();
+            renderer = engine.createRenderer();
+            scene = engine.createScene();
+            view = engine.createView();
+            cameraEntity = EntityManager.get().create();
+            camera = engine.createCamera(cameraEntity);
+            view.setCamera(camera);
+            view.setScene(scene);
+            lightEntity = EntityManager.get().create();
+            new LightManager.Builder(LightManager.Type.SUN)
+                    .color(1f, 1f, 1f)
+                    .intensity(100000f)
+                    .direction(-0.5f, -1f, -0.7f)
+                    .build(engine, lightEntity);
+            scene.addEntity(lightEntity);
+            swapChain = engine.createSwapChain(holder.getSurface());
 
-        if (event.getActionMasked() ==
-                MotionEvent.ACTION_MOVE) {
+            materialProvider = new UbershaderProvider(engine);
+            assetLoader = new AssetLoader(engine, materialProvider, EntityManager.get());
+            resourceLoader = new ResourceLoader(engine);
+            ByteBuffer glb = readAsset("bmw_m5_e60.glb");
+            asset = assetLoader.createAsset(glb);
+            if (asset == null) throw new IllegalStateException("GLB non reconnu");
+            resourceLoader.loadResources(asset);
+            scene.addEntities(asset.getEntities());
 
-            renderer.angleY += (x - lastX) * 0.5f;
-            renderer.angleX += (y - lastY) * 0.3f;
-
-            renderer.angleX = Math.max(
-                -45, Math.min(45, renderer.angleX)
-            );
-
-            requestRender();
+            float[] c = asset.getBoundingBox().getCenter();
+            float[] e = asset.getBoundingBox().getHalfExtent();
+            System.arraycopy(c, 0, center, 0, 3);
+            float longest = Math.max(e[0], Math.max(e[1], e[2]));
+            modelScale = longest > 0.0001f ? 1.5f / longest : 1f;
+            updateModel();
+            updateCamera();
+            running = true;
+            Choreographer.getInstance().postFrameCallback(frameCallback);
+        } catch (Exception e) {
+            android.util.Log.e("HybridE60", "Erreur de chargement BMW M5", e);
         }
+    }
 
+    private ByteBuffer readAsset(String name) throws Exception {
+        try (InputStream in = getContext().getAssets().open(name);
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] bytes = new byte[16384];
+            int n;
+            while ((n = in.read(bytes)) != -1) out.write(bytes, 0, n);
+            byte[] data = out.toByteArray();
+            ByteBuffer result = ByteBuffer.allocateDirect(data.length).order(ByteOrder.nativeOrder());
+            result.put(data);
+            result.flip();
+            return result;
+        }
+    }
+
+    private void updateModel() {
+        if (asset == null || engine == null) return;
+        float[] rotation = new float[16];
+        Matrix.setIdentityM(rotation, 0);
+        Matrix.rotateM(rotation, 0, pitch, 1f, 0f, 0f);
+        Matrix.rotateM(rotation, 0, yaw, 0f, 1f, 0f);
+        float[] normalization = new float[16];
+        Matrix.setIdentityM(normalization, 0);
+        Matrix.scaleM(normalization, 0, modelScale, modelScale, modelScale);
+        Matrix.translateM(normalization, 0, -center[0], -center[1], -center[2]);
+        float[] transform = new float[16];
+        Matrix.multiplyMM(transform, 0, rotation, 0, normalization, 0);
+        TransformManager tm = engine.getTransformManager();
+        int instance = tm.getInstance(asset.getRoot());
+        tm.setTransform(instance, transform);
+    }
+
+    private void updateCamera() {
+        if (camera == null) return;
+        camera.lookAt(0.0, 0.3, 5.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
+        int w = Math.max(1, getWidth()), h = Math.max(1, getHeight());
+        camera.setProjection(45.0, (double) w / h, 0.1, 100.0, Camera.Fov.VERTICAL);
+    }
+
+    private void drawFrame() {
+        if (engine == null || swapChain == null) return;
+        if (renderer.beginFrame(swapChain)) {
+            renderer.render(view);
+            renderer.endFrame();
+        }
+    }
+
+    @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        if (view != null) view.setViewport(new Viewport(0, 0, width, height));
+        updateCamera();
+    }
+
+    @Override public void surfaceDestroyed(SurfaceHolder holder) {
+        running = false;
+        Choreographer.getInstance().removeFrameCallback(frameCallback);
+        // A later revision will add complete engine resource teardown.
+    }
+
+    @Override public boolean onTouchEvent(MotionEvent event) {
+        float x = event.getX(), y = event.getY();
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            yaw += (x - lastX) * 0.5f;
+            pitch = Math.max(-45f, Math.min(45f, pitch + (y - lastY) * 0.3f));
+            updateModel();
+        }
         lastX = x;
         lastY = y;
-
         return true;
-    }
-
-    private static class CarRenderer
-            implements GLSurfaceView.Renderer {
-
-        volatile float angleY = -30f;
-        volatile float angleX = 15f;
-
-        private FloatBuffer vertices;
-        private int program;
-        private int positionHandle;
-        private int matrixHandle;
-
-        private final float[] projection = new float[16];
-        private final float[] view = new float[16];
-        private final float[] model = new float[16];
-        private final float[] temp = new float[16];
-        private final float[] mvp = new float[16];
-
-        private final float[] cube = {
-            -1,-1, 1,  1,-1, 1,  1, 1, 1,
-            -1,-1, 1,  1, 1, 1, -1, 1, 1,
-
-             1,-1,-1, -1,-1,-1, -1, 1,-1,
-             1,-1,-1, -1, 1,-1,  1, 1,-1,
-
-            -1,-1,-1, -1,-1, 1, -1, 1, 1,
-            -1,-1,-1, -1, 1, 1, -1, 1,-1,
-
-             1,-1, 1,  1,-1,-1,  1, 1,-1,
-             1,-1, 1,  1, 1,-1,  1, 1, 1,
-
-            -1, 1, 1,  1, 1, 1,  1, 1,-1,
-            -1, 1, 1,  1, 1,-1, -1, 1,-1,
-
-            -1,-1,-1,  1,-1,-1,  1,-1, 1,
-            -1,-1,-1,  1,-1, 1, -1,-1, 1
-        };
-
-        @Override
-        public void onSurfaceCreated(
-                javax.microedition.khronos.opengles.GL10 gl,
-                javax.microedition.khronos.egl.EGLConfig config) {
-
-            GLES20.glClearColor(0.02f, 0.04f, 0.08f, 1f);
-            GLES20.glEnable(GLES20.GL_DEPTH_TEST);
-
-            ByteBuffer buffer = ByteBuffer.allocateDirect(
-                cube.length * 4
-            );
-            buffer.order(ByteOrder.nativeOrder());
-
-            vertices = buffer.asFloatBuffer();
-            vertices.put(cube);
-            vertices.position(0);
-
-            String vertexShader =
-                "uniform mat4 uMVP;" +
-                "attribute vec4 aPosition;" +
-                "void main() {" +
-                "gl_Position = uMVP * aPosition;" +
-                "}";
-
-            String fragmentShader =
-                "precision mediump float;" +
-                "void main() {" +
-                "gl_FragColor = vec4(0.15,0.55,0.95,1.0);" +
-                "}";
-
-            int vs = compile(
-                GLES20.GL_VERTEX_SHADER, vertexShader
-            );
-
-            int fs = compile(
-                GLES20.GL_FRAGMENT_SHADER, fragmentShader
-            );
-
-            program = GLES20.glCreateProgram();
-            GLES20.glAttachShader(program, vs);
-            GLES20.glAttachShader(program, fs);
-            GLES20.glLinkProgram(program);
-
-            positionHandle = GLES20.glGetAttribLocation(
-                program, "aPosition"
-            );
-
-            matrixHandle = GLES20.glGetUniformLocation(
-                program, "uMVP"
-            );
-        }
-
-        private int compile(int type, String source) {
-            int shader = GLES20.glCreateShader(type);
-            GLES20.glShaderSource(shader, source);
-            GLES20.glCompileShader(shader);
-            return shader;
-        }
-
-        @Override
-        public void onSurfaceChanged(
-                javax.microedition.khronos.opengles.GL10 gl,
-                int width, int height) {
-
-            GLES20.glViewport(0, 0, width, height);
-
-            float ratio = (float) width /
-                Math.max(1, height);
-
-            Matrix.perspectiveM(
-                projection, 0, 45f, ratio, 1f, 100f
-            );
-        }
-
-        @Override
-        public void onDrawFrame(
-                javax.microedition.khronos.opengles.GL10 gl) {
-
-            GLES20.glClear(
-                GLES20.GL_COLOR_BUFFER_BIT |
-                GLES20.GL_DEPTH_BUFFER_BIT
-            );
-
-            Matrix.setLookAtM(
-                view, 0,
-                0, 0, 6,
-                0, 0, 0,
-                0, 1, 0
-            );
-
-            Matrix.setIdentityM(model, 0);
-
-            Matrix.rotateM(
-                model, 0, angleX, 1, 0, 0
-            );
-
-            Matrix.rotateM(
-                model, 0, angleY, 0, 1, 0
-            );
-
-            Matrix.multiplyMM(
-                temp, 0, view, 0, model, 0
-            );
-
-            Matrix.multiplyMM(
-                mvp, 0, projection, 0, temp, 0
-            );
-
-            GLES20.glUseProgram(program);
-
-            GLES20.glEnableVertexAttribArray(
-                positionHandle
-            );
-
-            GLES20.glVertexAttribPointer(
-                positionHandle,
-                3,
-                GLES20.GL_FLOAT,
-                false,
-                0,
-                vertices
-            );
-
-            GLES20.glUniformMatrix4fv(
-                matrixHandle, 1, false, mvp, 0
-            );
-
-            GLES20.glDrawArrays(
-                GLES20.GL_TRIANGLES, 0, 36
-            );
-
-            GLES20.glDisableVertexAttribArray(
-                positionHandle
-            );
-        }
     }
 }
