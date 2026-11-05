@@ -41,17 +41,19 @@ public class Car3DView extends SurfaceView
 
     private static final String TAG = "HybridE60";
 
+    // Ancien fichier GLB conserve.
     private static final String MODEL_FILE =
-            "bmw_e60_gris_metallise.glb";
+            "bmw_m5_e60_gris_test.glb";
 
     private static final String IBL_FILE =
             "RNF_default_env_ibl.ktx";
 
-    // Eclairage ambiant plus present.
+    // Eclairage d'environnement.
     private static final float IBL_INTENSITY = 55000f;
 
-    // Eclairage frontal plus doux.
-    private static final float CAMERA_LIGHT_INTENSITY = 14000f;
+    // Lumiere frontale douce.
+    private static final float CAMERA_LIGHT_INTENSITY =
+            14000f;
 
     private Engine engine;
     private Renderer renderer;
@@ -297,7 +299,7 @@ public class Car3DView extends SurfaceView
                 -1.0f, -0.3f, 0.0f
         );
 
-        // Lumiere suivant la camera.
+        // Lumiere qui suit la camera.
         cameraLightEntity = createDirectionalLight(
                 CAMERA_LIGHT_INTENSITY,
                 1.0f, 1.0f, 1.0f,
