@@ -1,6 +1,5 @@
 package com.hybride60.launcher;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.PixelFormat;
 import android.opengl.Matrix;
@@ -26,7 +25,6 @@ import com.google.android.filament.gltfio.FilamentAsset;
 import com.google.android.filament.gltfio.MaterialProvider;
 import com.google.android.filament.gltfio.ResourceLoader;
 import com.google.android.filament.gltfio.UbershaderProvider;
-import com.google.android.filament.utils.KTX1Loader;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -34,14 +32,10 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
+
     private static final String TAG = "HybridE60";
     private static final String MODEL_FILE = "bmw_m5_e60_gris_test.glb";
-    private static final String IBL_FILE = "RNF_default_env_ibl.ktx";
-    private static final float IBL_INTENSITY = 55000f;
     private static final float CAMERA_LIGHT_INTENSITY = 14000f;
-
-    // Passer a false pour retrouver instantanement le mode sans IBL.
-    private static final boolean TRY_IBL = true;
 
     private Engine engine;
     private Renderer renderer;
@@ -49,11 +43,13 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private View view;
     private Camera camera;
     private SwapChain swapChain;
+
     private AssetLoader assetLoader;
     private ResourceLoader resourceLoader;
     private MaterialProvider materialProvider;
     private FilamentAsset asset;
     private IndirectLight indirectLight;
+
     private int cameraEntity;
     private int cameraLightEntity;
     private final int[] fixedLights = new int[3];
@@ -61,20 +57,22 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private float yaw = -55f;
     private float pitch = 12f;
     private float orbitRadius = 3.8f;
-    private float lastX, lastY;
+    private float lastX;
+    private float lastY;
     private long lastTouchTime;
     private float previousPinchDistance;
-    private boolean pinching, touching;
-    private float yawVelocity, pitchVelocity;
+    private boolean pinching = false;
+    private boolean touching = false;
+    private float yawVelocity = 0f;
+    private float pitchVelocity = 0f;
     private float modelScale = 1f;
     private final float[] center = new float[3];
-    private boolean running;
-    private long lastFrameNanos;
-    private String iblError = null;
-    private boolean diagnosticShown;
+    private boolean running = false;
+    private long lastFrameNanos = 0L;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
-        @Override public void doFrame(long frameTimeNanos) {
+        @Override
+        public void doFrame(long frameTimeNanos) {
             if (!running) return;
             if (lastFrameNanos != 0L) {
                 float dt = Math.min(0.05f, (frameTimeNanos - lastFrameNanos) / 1_000_000_000f);
@@ -104,14 +102,14 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         setFocusable(true);
     }
 
-    @Override public void surfaceCreated(SurfaceHolder holder) {
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
         try {
             if (engine == null) {
                 initializeFilament();
+                initializeAmbientLight();
                 initializeLights();
                 loadCarModel();
-                // L'echec IBL ne doit pas empecher la BMW de s'afficher.
-                if (TRY_IBL) initializeIBLSafely();
             }
             if (swapChain == null) swapChain = engine.createSwapChain(holder.getSurface());
             updateCamera();
@@ -119,25 +117,25 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
             lastFrameNanos = 0L;
             Choreographer.getInstance().removeFrameCallback(frameCallback);
             Choreographer.getInstance().postFrameCallback(frameCallback);
-            showIblDiagnosticIfNeeded();
         } catch (Throwable error) {
             running = false;
-            Log.e(TAG, "Erreur initialisation 3D", error);
-            showDialog("ERREUR 3D", error.toString());
+            Log.e(TAG, "Erreur Filament", error);
+            post(() -> android.widget.Toast.makeText(getContext(),
+                    "Erreur 3D : " + error.getClass().getSimpleName(),
+                    android.widget.Toast.LENGTH_LONG).show());
         }
     }
 
     private void initializeFilament() {
         com.google.android.filament.Filament.init();
         com.google.android.filament.gltfio.Gltfio.init();
-        // Aucun System.loadLibrary avec un nom suppose.
         engine = Engine.create();
         renderer = engine.createRenderer();
-        Renderer.ClearOptions options = new Renderer.ClearOptions();
-        options.clear = true;
-        options.discard = true;
-        options.clearColor = new float[]{0f, 0f, 0f, 1f};
-        renderer.setClearOptions(options);
+        Renderer.ClearOptions clearOptions = new Renderer.ClearOptions();
+        clearOptions.clear = true;
+        clearOptions.discard = true;
+        clearOptions.clearColor = new float[]{0f, 0f, 0f, 1f};
+        renderer.setClearOptions(clearOptions);
         scene = engine.createScene();
         view = engine.createView();
         cameraEntity = EntityManager.get().create();
@@ -148,61 +146,34 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         view.setPostProcessingEnabled(false);
     }
 
-    private void initializeIBLSafely() {
-        String stage = "lecture KTX";
-        int size = 0;
+    // Lumiere ambiante diffuse, sans fichier KTX et sans KTX1Loader.
+    // Les 9 coefficients RGB correspondent aux harmoniques spheriques (3 bandes).
+    // Seul le coefficient constant est utilise pour un eclairage uniforme.
+    private void initializeAmbientLight() {
         try {
-            ByteBuffer buffer = readAsset(IBL_FILE);
-            size = buffer.remaining();
-            stage = "validation signature";
-            byte[] signature = {(byte)0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31,
-                    (byte)0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
-            if (size < 64) throw new IllegalArgumentException("KTX trop petit");
-            for (int i = 0; i < signature.length; i++) {
-                if (buffer.get(i) != signature[i])
-                    throw new IllegalArgumentException("Signature KTX1 incorrecte");
-            }
-            stage = "KTX1Loader.createIndirectLight";
-            IndirectLight candidate = KTX1Loader.INSTANCE.createIndirectLight(
-                    engine, buffer, new KTX1Loader.Options());
-            if (candidate == null) throw new IllegalStateException("IBL null");
-            candidate.setIntensity(IBL_INTENSITY);
-            scene.setIndirectLight(candidate);
-            indirectLight = candidate;
-            iblError = null;
-            Log.i(TAG, "IBL charge avec succes");
+            float[] sh = new float[27];
+            sh[0] = 0.85f;
+            sh[1] = 0.85f;
+            sh[2] = 0.85f;
+            indirectLight = new IndirectLight.Builder()
+                    .irradiance(3, sh)
+                    .intensity(30000f)
+                    .build(engine);
+            scene.setIndirectLight(indirectLight);
+            Log.i(TAG, "Eclairage ambiant SH actif (sans KTX)");
         } catch (Throwable error) {
-            // Y compris UnsatisfiedLinkError, sans faire tomber le rendu 3D.
-            Log.e(TAG, "IBL non charge, eclairage direct conserve", error);
-            iblError = "Fichier : " + IBL_FILE + "\nTaille : " + size +
-                    " octets\nEtape : " + stage + "\n\n" + error.toString();
+            indirectLight = null;
+            Log.e(TAG, "Eclairage ambiant indisponible; lumieres directes conservees", error);
         }
     }
 
-    private void showIblDiagnosticIfNeeded() {
-        if (iblError == null || diagnosticShown) return;
-        diagnosticShown = true;
-        showDialog("IBL indisponible - BMW affichee", iblError +
-                "\n\nLa BMW continue avec les 4 lumieres directes.");
-    }
-
-    private void showDialog(String title, String message) {
-        post(() -> {
-            if (getWindowToken() == null) return;
-            try {
-                new AlertDialog.Builder(getContext())
-                        .setTitle(title).setMessage(message)
-                        .setPositiveButton("OK", null).show();
-            } catch (Throwable error) {
-                Log.e(TAG, "Affichage diagnostic impossible", error);
-            }
-        });
-    }
-
     private void initializeLights() {
-        fixedLights[0] = createDirectionalLight(30000f, 1f, .98f, .96f, -.3f, -1f, -.3f);
-        fixedLights[1] = createDirectionalLight(18000f, 1f, 1f, 1f, 1f, -.3f, 0f);
-        fixedLights[2] = createDirectionalLight(18000f, .96f, .98f, 1f, -1f, -.3f, 0f);
+        fixedLights[0] = createDirectionalLight(30000f, 1f, .98f, .96f,
+                -.3f, -1f, -.3f);
+        fixedLights[1] = createDirectionalLight(18000f, 1f, 1f, 1f,
+                1f, -.3f, 0f);
+        fixedLights[2] = createDirectionalLight(18000f, .96f, .98f, 1f,
+                -1f, -.3f, 0f);
         cameraLightEntity = createDirectionalLight(CAMERA_LIGHT_INTENSITY,
                 1f, 1f, 1f, 0f, -.4f, -1f);
     }
@@ -211,8 +182,11 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                                        float blue, float dx, float dy, float dz) {
         int entity = EntityManager.get().create();
         new LightManager.Builder(LightManager.Type.DIRECTIONAL)
-                .color(red, green, blue).intensity(intensity)
-                .direction(dx, dy, dz).castShadows(false).build(engine, entity);
+                .color(red, green, blue)
+                .intensity(intensity)
+                .direction(dx, dy, dz)
+                .castShadows(false)
+                .build(engine, entity);
         scene.addEntity(entity);
         return entity;
     }
@@ -222,9 +196,11 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         LightManager manager = engine.getLightManager();
         int instance = manager.getInstance(cameraLightEntity);
         if (instance == 0) return;
-        float dx = (float)-cx, dy = (float)-cy, dz = (float)-cz;
-        float length = (float)Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (length < .0001f) return;
+        float dx = (float) -cx;
+        float dy = (float) -cy;
+        float dz = (float) -cz;
+        float length = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (length < 0.0001f) return;
         manager.setDirection(instance, dx / length, dy / length, dz / length);
     }
 
@@ -240,16 +216,16 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         float[] e = asset.getBoundingBox().getHalfExtent();
         System.arraycopy(c, 0, center, 0, 3);
         float longest = Math.max(e[0], Math.max(e[1], e[2]));
-        modelScale = longest > .0001f ? 1.5f / longest : 1f;
+        modelScale = longest > 0.0001f ? 1.5f / longest : 1f;
         updateModel();
     }
 
     private ByteBuffer readAsset(String name) throws Exception {
         try (InputStream in = getContext().getAssets().open(name);
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            byte[] chunk = new byte[16384];
-            int n;
-            while ((n = in.read(chunk)) != -1) out.write(chunk, 0, n);
+            byte[] buffer = new byte[16384];
+            int count;
+            while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
             byte[] bytes = out.toByteArray();
             ByteBuffer result = ByteBuffer.allocateDirect(bytes.length)
                     .order(ByteOrder.nativeOrder());
@@ -272,15 +248,16 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
     private void updateCamera() {
         if (camera == null) return;
-        double yr = Math.toRadians(yaw), pr = Math.toRadians(pitch);
+        double yr = Math.toRadians(yaw);
+        double pr = Math.toRadians(pitch);
         double cx = orbitRadius * Math.sin(yr) * Math.cos(pr);
         double cy = orbitRadius * Math.sin(pr);
         double cz = orbitRadius * Math.cos(yr) * Math.cos(pr);
-        camera.lookAt(cx, cy, cz, 0, 0, 0, 0, 1, 0);
+        camera.lookAt(cx, cy, cz, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
         int width = Math.max(1, getWidth());
         int height = Math.max(1, getHeight());
-        camera.setProjection(40.0, (double)width / height,
-                .1, 100.0, Camera.Fov.VERTICAL);
+        camera.setProjection(40.0, (double) width / height, 0.1, 100.0,
+                Camera.Fov.VERTICAL);
         updateCameraLight(cx, cy, cz);
     }
 
@@ -292,14 +269,16 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         }
     }
 
-    @Override public void surfaceChanged(SurfaceHolder holder, int format,
-                                         int width, int height) {
-        if (view != null) view.setViewport(new Viewport(0, 0,
-                Math.max(1, width), Math.max(1, height)));
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        if (view != null) {
+            view.setViewport(new Viewport(0, 0, Math.max(1, width), Math.max(1, height)));
+        }
         updateCamera();
     }
 
-    @Override public void surfaceDestroyed(SurfaceHolder holder) {
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
         running = false;
         Choreographer.getInstance().removeFrameCallback(frameCallback);
         if (engine != null && swapChain != null) {
@@ -316,26 +295,31 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private static float pointerDistance(MotionEvent event) {
         float dx = event.getX(0) - event.getX(1);
         float dy = event.getY(0) - event.getY(1);
-        return (float)Math.sqrt(dx * dx + dy * dy);
+        return (float) Math.sqrt(dx * dx + dy * dy);
     }
 
-    @Override public boolean onTouchEvent(MotionEvent event) {
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 lastX = event.getX();
                 lastY = event.getY();
                 lastTouchTime = event.getEventTime();
-                yawVelocity = pitchVelocity = 0f;
+                yawVelocity = 0f;
+                pitchVelocity = 0f;
                 pinching = false;
                 touching = true;
                 return true;
+
             case MotionEvent.ACTION_POINTER_DOWN:
                 if (event.getPointerCount() >= 2) {
                     pinching = true;
                     previousPinchDistance = pointerDistance(event);
-                    yawVelocity = pitchVelocity = 0f;
+                    yawVelocity = 0f;
+                    pitchVelocity = 0f;
                 }
                 return true;
+
             case MotionEvent.ACTION_MOVE:
                 if (event.getPointerCount() >= 2) {
                     float distance = pointerDistance(event);
@@ -347,23 +331,27 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                     previousPinchDistance = distance;
                     pinching = true;
                 } else if (!pinching) {
-                    float x = event.getX(), y = event.getY();
-                    float dx = x - lastX, dy = y - lastY;
+                    float x = event.getX();
+                    float y = event.getY();
+                    float dx = x - lastX;
+                    float dy = y - lastY;
                     long currentTime = event.getEventTime();
-                    float dt = Math.max(.008f, (currentTime - lastTouchTime) / 1000f);
-                    yaw += dx * .5f;
-                    pitch = clamp(pitch + dy * .3f, -55f, 65f);
-                    yawVelocity = clamp(dx * .5f / dt, -240f, 240f);
-                    pitchVelocity = clamp(dy * .3f / dt, -150f, 150f);
+                    float dt = Math.max(0.008f, (currentTime - lastTouchTime) / 1000f);
+                    yaw += dx * 0.5f;
+                    pitch = clamp(pitch + dy * 0.3f, -55f, 65f);
+                    yawVelocity = clamp(dx * 0.5f / dt, -240f, 240f);
+                    pitchVelocity = clamp(dy * 0.3f / dt, -150f, 150f);
                     lastX = x;
                     lastY = y;
                     lastTouchTime = currentTime;
                     updateCamera();
                 }
                 return true;
+
             case MotionEvent.ACTION_POINTER_UP:
                 pinching = false;
-                yawVelocity = pitchVelocity = 0f;
+                yawVelocity = 0f;
+                pitchVelocity = 0f;
                 if (event.getPointerCount() >= 2) {
                     int remaining = event.getActionIndex() == 0 ? 1 : 0;
                     lastX = event.getX(remaining);
@@ -371,15 +359,19 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                     lastTouchTime = event.getEventTime();
                 }
                 return true;
+
             case MotionEvent.ACTION_UP:
                 touching = false;
                 pinching = false;
                 return true;
+
             case MotionEvent.ACTION_CANCEL:
                 touching = false;
                 pinching = false;
-                yawVelocity = pitchVelocity = 0f;
+                yawVelocity = 0f;
+                pitchVelocity = 0f;
                 return true;
+
             default:
                 return true;
         }
