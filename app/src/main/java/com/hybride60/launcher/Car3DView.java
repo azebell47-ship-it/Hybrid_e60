@@ -47,8 +47,8 @@ public class Car3DView extends SurfaceView
     private static final String IBL_FILE =
             "RNF_default_env_ibl.ktx";
 
-    // Intensité de l'éclairage d'environnement.
-    private static final float IBL_INTENSITY = 30000f;
+    // Intensité volontairement élevée pour le test.
+    private static final float IBL_INTENSITY = 100000f;
 
     private Engine engine;
     private Renderer renderer;
@@ -159,11 +159,8 @@ public class Car3DView extends SurfaceView
             if (engine == null) {
 
                 initializeFilament();
-
                 initializeIBL();
-
                 initializeLights();
-
                 loadCarModel();
             }
 
@@ -199,7 +196,7 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Initialisation du moteur 3D.
+    // Initialisation du moteur Filament.
     private void initializeFilament() {
 
         com.google.android.filament.Filament.init();
@@ -209,13 +206,13 @@ public class Car3DView extends SurfaceView
 
         renderer = engine.createRenderer();
 
+        // Fond noir.
         Renderer.ClearOptions clearOptions =
                 new Renderer.ClearOptions();
 
         clearOptions.clear = true;
         clearOptions.discard = true;
 
-        // Fond noir.
         clearOptions.clearColor =
                 new float[]{0f, 0f, 0f, 1f};
 
@@ -225,7 +222,6 @@ public class Car3DView extends SurfaceView
         view = engine.createView();
 
         cameraEntity = EntityManager.get().create();
-
         camera = engine.createCamera(cameraEntity);
 
         view.setCamera(camera);
@@ -233,17 +229,15 @@ public class Car3DView extends SurfaceView
 
         view.setBlendMode(View.BlendMode.OPAQUE);
 
-        // On conserve ton rendu stable.
         view.setPostProcessingEnabled(false);
     }
 
-    // NOUVEAU : éclairage indirect IBL.
+    // Éclairage indirect IBL.
     private void initializeIBL() {
 
         try {
 
-            ByteBuffer iblBuffer =
-                    readAsset(IBL_FILE);
+            ByteBuffer iblBuffer = readAsset(IBL_FILE);
 
             KTX1Loader.Options options =
                     new KTX1Loader.Options();
@@ -256,44 +250,42 @@ public class Car3DView extends SurfaceView
                     );
 
             if (indirectLight == null) {
+
                 throw new IllegalStateException(
                         "Création de l'IBL impossible"
                 );
             }
 
+            // Test à 100 000.
             indirectLight.setIntensity(IBL_INTENSITY);
 
             scene.setIndirectLight(indirectLight);
 
-            // Aucun skybox :
-            // le fond reste entièrement noir.
+            // Pas de skybox : fond noir conservé.
 
-            Log.i(TAG, "Éclairage IBL activé");
+            Log.i(
+                    TAG,
+                    "IBL activé avec intensité "
+                            + IBL_INTENSITY
+            );
 
         } catch (Throwable error) {
 
-            Log.e(
-                    TAG,
-                    "Impossible de charger l'IBL",
-                    error
-            );
+            Log.e(TAG, "Erreur chargement IBL", error);
 
-            // Le modèle peut continuer à fonctionner
-            // avec les lumières classiques.
             indirectLight = null;
 
             Toast.makeText(
                     getContext(),
-                    "IBL non chargé : vérifie le fichier KTX",
+                    "IBL non chargé : vérifie le KTX",
                     Toast.LENGTH_LONG
             ).show();
         }
     }
 
-    // Éclairage direct complémentaire.
+    // Lumières complémentaires.
     private void initializeLights() {
 
-        // Lumière principale du dessus.
         addDirectionalLight(
                 0,
                 35000f,
@@ -301,7 +293,6 @@ public class Car3DView extends SurfaceView
                 -0.4f, -1.0f, -0.4f
         );
 
-        // Lumière douce côté gauche.
         addDirectionalLight(
                 1,
                 12000f,
@@ -309,7 +300,6 @@ public class Car3DView extends SurfaceView
                 1.0f, -0.4f, 0.0f
         );
 
-        // Lumière douce côté droit.
         addDirectionalLight(
                 2,
                 12000f,
@@ -348,7 +338,7 @@ public class Car3DView extends SurfaceView
         scene.addEntity(entity);
     }
 
-    // Chargement de la BMW.
+    // Chargement du modèle BMW.
     private void loadCarModel() throws Exception {
 
         materialProvider = new UbershaderProvider(engine);
@@ -376,11 +366,8 @@ public class Car3DView extends SurfaceView
 
         scene.addEntities(asset.getEntities());
 
-        float[] c =
-                asset.getBoundingBox().getCenter();
-
-        float[] e =
-                asset.getBoundingBox().getHalfExtent();
+        float[] c = asset.getBoundingBox().getCenter();
+        float[] e = asset.getBoundingBox().getHalfExtent();
 
         System.arraycopy(c, 0, center, 0, 3);
 
@@ -396,7 +383,7 @@ public class Car3DView extends SurfaceView
         updateModel();
     }
 
-    // Lecture des fichiers dans assets.
+    // Lecture des fichiers assets.
     private ByteBuffer readAsset(String name)
             throws Exception {
 
@@ -428,7 +415,7 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Centrage du modèle.
+    // Centrage et mise à l'échelle.
     private void updateModel() {
 
         if (asset == null || engine == null) return;
@@ -503,7 +490,7 @@ public class Car3DView extends SurfaceView
         );
     }
 
-    // Rendu.
+    // Affichage des images.
     private void drawFrame(long frameTimeNanos) {
 
         if (engine == null ||
@@ -519,7 +506,6 @@ public class Car3DView extends SurfaceView
                 frameTimeNanos)) {
 
             renderer.render(view);
-
             renderer.endFrame();
         }
     }
