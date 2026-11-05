@@ -31,10 +31,9 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-/** Diagnostic: opaque black framebuffer clear, no post-processing, orbit camera. */
+/** HYBRID_E60: orbit camera, pinch zoom, gentle inertia; retain black framebuffer clear. */
 public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private static final String TAG = "HybridE60";
-
     private Engine engine;
     private Renderer renderer;
     private Scene scene;
@@ -47,18 +46,38 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private FilamentAsset asset;
     private int cameraEntity;
     private int lightEntity;
+    private int fillLightEntity;
 
     private float yaw = -30f;
     private float pitch = 15f;
     private float lastX, lastY;
+    private float orbitRadius = 5f;
+    private float previousPinchDistance;
+    private boolean pinching;
+    private float yawVelocity, pitchVelocity;
+    private long lastFrameNanos;
     private float modelScale = 1f;
     private final float[] center = new float[3];
     private boolean running;
 
     private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
-        @Override
-        public void doFrame(long frameTimeNanos) {
+        @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
+            if (lastFrameNanos != 0L) {
+                float dt = Math.min(0.05f, (frameTimeNanos - lastFrameNanos) / 1_000_000_000f);
+                if (!pinching && Math.abs(yawVelocity) + Math.abs(pitchVelocity) > 0.02f) {
+                    yaw += yawVelocity * dt;
+                    pitch = clamp(pitch + pitchVelocity * dt, -65f, 65f);
+                    float damping = (float) Math.exp(-5.5f * dt);
+                    yawVelocity *= damping;
+                    pitchVelocity *= damping;
+                    updateCamera();
+                } else {
+                    yawVelocity = 0f;
+                    pitchVelocity = 0f;
+                }
+            }
+            lastFrameNanos = frameTimeNanos;
             drawFrame(frameTimeNanos);
             if (running) Choreographer.getInstance().postFrameCallback(this);
         }
@@ -66,52 +85,55 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
     public Car3DView(Context context) {
         super(context);
-        // Important: do not use a translucent surface for this black-background viewer.
         getHolder().setFormat(PixelFormat.OPAQUE);
         getHolder().addCallback(this);
         setFocusable(true);
     }
 
-    @Override
-    public void surfaceCreated(SurfaceHolder holder) {
+    @Override public void surfaceCreated(SurfaceHolder holder) {
         try {
             if (engine == null) {
                 com.google.android.filament.Filament.init();
                 com.google.android.filament.gltfio.Gltfio.init();
                 engine = Engine.create();
                 renderer = engine.createRenderer();
-                // Force an opaque black clear at the start of every frame.
+                // IMPORTANT: this explicit clear fixes the persistent blue sphere.
                 Renderer.ClearOptions clearOptions = new Renderer.ClearOptions();
                 clearOptions.clear = true;
                 clearOptions.discard = true;
                 clearOptions.clearColor = new float[]{0f, 0f, 0f, 1f};
                 renderer.setClearOptions(clearOptions);
+
                 scene = engine.createScene();
                 view = engine.createView();
-
                 cameraEntity = EntityManager.get().create();
                 camera = engine.createCamera(cameraEntity);
                 view.setCamera(camera);
                 view.setScene(scene);
-
-                // Fully opaque output: every new frame replaces the previous image.
                 view.setBlendMode(View.BlendMode.OPAQUE);
-                // Diagnostic: désactiver les effets temporels et le post-traitement.
+                // Keep post-processing disabled, as in the working version.
                 view.setPostProcessingEnabled(false);
 
                 lightEntity = EntityManager.get().create();
                 new LightManager.Builder(LightManager.Type.SUN)
                         .color(1f, 1f, 1f)
-                        .intensity(100000f)
+                        .intensity(110000f)
                         .direction(-0.5f, -1f, -0.7f)
                         .build(engine, lightEntity);
                 scene.addEntity(lightEntity);
 
+                // Gentle secondary light for better visibility on the dark-blue body.
+                fillLightEntity = EntityManager.get().create();
+                new LightManager.Builder(LightManager.Type.DIRECTIONAL)
+                        .color(0.8f, 0.9f, 1f)
+                        .intensity(30000f)
+                        .direction(0.7f, -0.4f, 0.5f)
+                        .build(engine, fillLightEntity);
+                scene.addEntity(fillLightEntity);
+
                 materialProvider = new UbershaderProvider(engine);
                 assetLoader = new AssetLoader(engine, materialProvider, EntityManager.get());
                 resourceLoader = new ResourceLoader(engine);
-
-                Log.i(TAG, "Chargement bmw_m5_e60.glb");
                 asset = assetLoader.createAsset(readAsset("bmw_m5_e60.glb"));
                 if (asset == null) throw new IllegalStateException("GLB non reconnu");
                 resourceLoader.loadResources(asset);
@@ -124,10 +146,10 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                 modelScale = longest > 0.0001f ? 1.5f / longest : 1f;
                 updateModel();
             }
-
             swapChain = engine.createSwapChain(holder.getSurface());
             updateCamera();
             running = true;
+            lastFrameNanos = 0L;
             Choreographer.getInstance().removeFrameCallback(frameCallback);
             Choreographer.getInstance().postFrameCallback(frameCallback);
         } catch (Throwable error) {
@@ -153,30 +175,22 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
     private void updateModel() {
         if (asset == null || engine == null) return;
-        float[] rotation = new float[16];
-        Matrix.setIdentityM(rotation, 0);
-        // Rotation désactivée côté modèle : test de la caméra orbitale.
-
         float[] normalization = new float[16];
         Matrix.setIdentityM(normalization, 0);
         Matrix.scaleM(normalization, 0, modelScale, modelScale, modelScale);
         Matrix.translateM(normalization, 0, -center[0], -center[1], -center[2]);
-
-        float[] transform = new float[16];
-        Matrix.multiplyMM(transform, 0, rotation, 0, normalization, 0);
         TransformManager manager = engine.getTransformManager();
         int instance = manager.getInstance(asset.getRoot());
-        if (instance != 0) manager.setTransform(instance, transform);
+        if (instance != 0) manager.setTransform(instance, normalization);
     }
 
     private void updateCamera() {
         if (camera == null) return;
         double yr = Math.toRadians(yaw);
         double pr = Math.toRadians(pitch);
-        double radius = 5.0;
-        double cx = radius * Math.sin(yr) * Math.cos(pr);
-        double cy = radius * Math.sin(pr);
-        double cz = radius * Math.cos(yr) * Math.cos(pr);
+        double cx = orbitRadius * Math.sin(yr) * Math.cos(pr);
+        double cy = orbitRadius * Math.sin(pr);
+        double cz = orbitRadius * Math.cos(yr) * Math.cos(pr);
         camera.lookAt(cx, cy, cz, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
         int width = Math.max(1, getWidth());
         int height = Math.max(1, getHeight());
@@ -191,14 +205,12 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         }
     }
 
-    @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+    @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
         if (view != null) view.setViewport(new Viewport(0, 0, width, height));
         updateCamera();
     }
 
-    @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
+    @Override public void surfaceDestroyed(SurfaceHolder holder) {
         running = false;
         Choreographer.getInstance().removeFrameCallback(frameCallback);
         if (engine != null && swapChain != null) {
@@ -208,24 +220,78 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         }
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        float x = event.getX();
-        float y = event.getY();
+    private static float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static float pointerDistance(MotionEvent event) {
+        float dx = event.getX(0) - event.getX(1);
+        float dy = event.getY(0) - event.getY(1);
+        return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
+    @Override public boolean onTouchEvent(MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                lastX = x;
-                lastY = y;
+                lastX = event.getX();
+                lastY = event.getY();
+                yawVelocity = 0f;
+                pitchVelocity = 0f;
+                pinching = false;
+                return true;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (event.getPointerCount() >= 2) {
+                    pinching = true;
+                    previousPinchDistance = pointerDistance(event);
+                    yawVelocity = 0f;
+                    pitchVelocity = 0f;
+                }
                 return true;
             case MotionEvent.ACTION_MOVE:
-                yaw += (x - lastX) * 0.5f;
-                pitch = Math.max(-45f, Math.min(45f, pitch + (y - lastY) * 0.3f));
-                lastX = x;
-                lastY = y;
-                updateCamera();
+                if (event.getPointerCount() >= 2) {
+                    float distance = pointerDistance(event);
+                    if (previousPinchDistance > 10f && distance > 10f) {
+                        orbitRadius = clamp(orbitRadius * previousPinchDistance / distance, 2.8f, 10f);
+                        updateCamera();
+                    }
+                    previousPinchDistance = distance;
+                    pinching = true;
+                } else if (!pinching) {
+                    float x = event.getX();
+                    float y = event.getY();
+                    float dx = x - lastX;
+                    float dy = y - lastY;
+                    yaw += dx * 0.5f;
+                    pitch = clamp(pitch + dy * 0.3f, -65f, 65f);
+                    // Velocity is measured in degrees per second, then decays after release.
+                    long historyTime = event.getHistorySize() > 0
+                            ? event.getHistoricalEventTime(event.getHistorySize() - 1)
+                            : event.getEventTime() - 16;
+                    float dt = Math.max(0.008f, (event.getEventTime() - historyTime) / 1000f);
+                    yawVelocity = clamp(dx * 0.5f / dt, -240f, 240f);
+                    pitchVelocity = clamp(dy * 0.3f / dt, -150f, 150f);
+                    lastX = x;
+                    lastY = y;
+                    updateCamera();
+                }
+                return true;
+            case MotionEvent.ACTION_POINTER_UP:
+                pinching = false;
+                yawVelocity = 0f;
+                pitchVelocity = 0f;
+                if (event.getPointerCount() >= 2) {
+                    int remaining = event.getActionIndex() == 0 ? 1 : 0;
+                    lastX = event.getX(remaining);
+                    lastY = event.getY(remaining);
+                }
                 return true;
             case MotionEvent.ACTION_UP:
+                pinching = false;
+                return true;
             case MotionEvent.ACTION_CANCEL:
+                pinching = false;
+                yawVelocity = 0f;
+                pitchVelocity = 0f;
                 return true;
             default:
                 return true;
