@@ -54,10 +54,9 @@ public class Car3DView extends SurfaceView
     private FilamentAsset asset;
 
     private int cameraEntity;
-    private int sunEntity;
-    private int fillEntity;
-    private int frontEntity;
-    private int rearEntity;
+
+    // Six lumières autour du véhicule.
+    private final int[] lightEntities = new int[6];
 
     // Position initiale de la caméra.
     private float yaw = -55f;
@@ -87,7 +86,9 @@ public class Car3DView extends SurfaceView
         @Override
         public void doFrame(long frameTimeNanos) {
 
-            if (!running) return;
+            if (!running) {
+                return;
+            }
 
             if (lastFrameNanos != 0L) {
 
@@ -226,62 +227,94 @@ public class Car3DView extends SurfaceView
 
         view.setBlendMode(View.BlendMode.OPAQUE);
 
-        // On conserve la configuration stable.
+        // Configuration stable du rendu.
         view.setPostProcessingEnabled(false);
     }
 
-    // Nouvel éclairage amélioré.
+    // Éclairage réparti sur 360 degrés.
     private void initializeLights() {
 
-        // Lumière principale : toit et carrosserie.
-        sunEntity = EntityManager.get().create();
+        // Lumière principale du dessus.
+        addDirectionalLight(
+                0,
+                65000f,
+                1.0f, 0.98f, 0.96f,
+                -0.35f, -1.0f, -0.45f
+        );
 
-        new LightManager.Builder(LightManager.Type.SUN)
-                .color(1.0f, 0.98f, 0.96f)
-                .intensity(100000f)
-                .direction(-0.4f, -1.0f, -0.3f)
-                .build(engine, sunEntity);
+        // Lumière côté gauche.
+        addDirectionalLight(
+                1,
+                45000f,
+                1.0f, 1.0f, 1.0f,
+                1.0f, -0.35f, 0.0f
+        );
 
-        scene.addEntity(sunEntity);
+        // Lumière côté droit.
+        addDirectionalLight(
+                2,
+                45000f,
+                0.96f, 0.98f, 1.0f,
+                -1.0f, -0.35f, 0.0f
+        );
 
-        // Lumière principale sur les côtés.
-        fillEntity = EntityManager.get().create();
+        // Lumière avant.
+        addDirectionalLight(
+                3,
+                35000f,
+                1.0f, 1.0f, 1.0f,
+                0.0f, -0.35f, -1.0f
+        );
 
-        new LightManager.Builder(
-                LightManager.Type.DIRECTIONAL)
-                .color(1.0f, 1.0f, 1.0f)
-                .intensity(100000f)
-                .direction(0.8f, -0.15f, -0.6f)
-                .build(engine, fillEntity);
+        // Lumière arrière.
+        addDirectionalLight(
+                4,
+                35000f,
+                1.0f, 1.0f, 1.0f,
+                0.0f, -0.35f, 1.0f
+        );
 
-        scene.addEntity(fillEntity);
-
-        // Lumière du côté opposé.
-        frontEntity = EntityManager.get().create();
-
-        new LightManager.Builder(
-                LightManager.Type.DIRECTIONAL)
-                .color(0.92f, 0.96f, 1.0f)
-                .intensity(65000f)
-                .direction(-0.8f, -0.2f, 0.5f)
-                .build(engine, frontEntity);
-
-        scene.addEntity(frontEntity);
-
-        // Éclairage complémentaire des surfaces verticales.
-        rearEntity = EntityManager.get().create();
-
-        new LightManager.Builder(
-                LightManager.Type.DIRECTIONAL)
-                .color(1.0f, 1.0f, 1.0f)
-                .intensity(45000f)
-                .direction(0.0f, -0.1f, 1.0f)
-                .build(engine, rearEntity);
-
-        scene.addEntity(rearEntity);
+        // Lumière douce supplémentaire du dessus.
+        addDirectionalLight(
+                5,
+                18000f,
+                1.0f, 1.0f, 1.0f,
+                0.0f, -1.0f, 0.0f
+        );
     }
 
-    // Chargement de la BMW.
+    // Création d'une lumière directionnelle.
+    private void addDirectionalLight(
+            int index,
+            float intensity,
+            float red,
+            float green,
+            float blue,
+            float directionX,
+            float directionY,
+            float directionZ) {
+
+        int entity = EntityManager.get().create();
+
+        lightEntities[index] = entity;
+
+        new LightManager.Builder(
+                LightManager.Type.DIRECTIONAL
+        )
+                .color(red, green, blue)
+                .intensity(intensity)
+                .direction(
+                        directionX,
+                        directionY,
+                        directionZ
+                )
+                .castShadows(false)
+                .build(engine, entity);
+
+        scene.addEntity(entity);
+    }
+
+    // Chargement du modèle BMW.
     private void loadCarModel() throws Exception {
 
         materialProvider = new UbershaderProvider(engine);
@@ -366,7 +399,9 @@ public class Car3DView extends SurfaceView
     // Centrage et mise à l'échelle du véhicule.
     private void updateModel() {
 
-        if (asset == null || engine == null) return;
+        if (asset == null || engine == null) {
+            return;
+        }
 
         float[] normalization = new float[16];
 
@@ -406,7 +441,9 @@ public class Car3DView extends SurfaceView
     // Position et projection de la caméra.
     private void updateCamera() {
 
-        if (camera == null) return;
+        if (camera == null) {
+            return;
+        }
 
         double yr = Math.toRadians(yaw);
         double pr = Math.toRadians(pitch);
