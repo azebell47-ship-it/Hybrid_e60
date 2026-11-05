@@ -47,9 +47,11 @@ public class Car3DView extends SurfaceView
     private static final String IBL_FILE =
             "RNF_default_env_ibl.ktx";
 
-    // Réglages pour un gris anthracite métallisé.
-    private static final float IBL_INTENSITY = 35000f;
-    private static final float CAMERA_LIGHT_INTENSITY = 18000f;
+    // Éclairage équilibré pour gris anthracite.
+    private static final float IBL_INTENSITY = 40000f;
+
+    private static final float CAMERA_LIGHT_INTENSITY =
+            30000f;
 
     private Engine engine;
     private Renderer renderer;
@@ -70,7 +72,7 @@ public class Car3DView extends SurfaceView
 
     private final int[] fixedLights = new int[3];
 
-    // Caméra orbitale.
+    // Position initiale de la caméra.
     private float yaw = -55f;
     private float pitch = 12f;
     private float orbitRadius = 3.8f;
@@ -92,7 +94,7 @@ public class Car3DView extends SurfaceView
     private boolean running = false;
     private long lastFrameNanos = 0L;
 
-    // Animation et inertie.
+    // Animation et inertie de rotation.
     private final Choreographer.FrameCallback frameCallback =
             new Choreographer.FrameCallback() {
 
@@ -160,7 +162,7 @@ public class Car3DView extends SurfaceView
         setFocusable(true);
     }
 
-    // Initialisation de la surface.
+    // Création de la surface.
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
 
@@ -239,11 +241,11 @@ public class Car3DView extends SurfaceView
 
         view.setBlendMode(View.BlendMode.OPAQUE);
 
-        // On conserve le rendu stable.
+        // Configuration stable.
         view.setPostProcessingEnabled(false);
     }
 
-    // Éclairage indirect IBL.
+    // Chargement de l'environnement lumineux IBL.
     private void initializeIBL() {
 
         try {
@@ -272,8 +274,7 @@ public class Car3DView extends SurfaceView
 
             scene.setIndirectLight(indirectLight);
 
-            // Pas de skybox :
-            // le fond reste noir.
+            // Pas de skybox : fond noir conservé.
 
             Log.i(
                     TAG,
@@ -295,31 +296,32 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Lumières fixes et lumière caméra.
+    // Éclairage supérieur, latéral et caméra.
     private void initializeLights() {
 
-        // Lumière principale au-dessus.
+        // Lumière supérieure :
+        // toit, capot et coffre.
         fixedLights[0] = createDirectionalLight(
-                35000f,
+                25000f,
                 1.0f, 0.98f, 0.96f,
                 -0.4f, -1.0f, -0.4f
         );
 
-        // Éclairage doux côté gauche.
+        // Lumière côté gauche.
         fixedLights[1] = createDirectionalLight(
-                12000f,
+                20000f,
                 1.0f, 1.0f, 1.0f,
                 1.0f, -0.4f, 0.0f
         );
 
-        // Éclairage doux côté droit.
+        // Lumière côté droit.
         fixedLights[2] = createDirectionalLight(
-                12000f,
+                20000f,
                 0.96f, 0.98f, 1.0f,
                 -1.0f, -0.4f, 0.0f
         );
 
-        // Lumière frontale suivant la caméra.
+        // Lumière qui suit la caméra.
         cameraLightEntity = createDirectionalLight(
                 CAMERA_LIGHT_INTENSITY,
                 1.0f, 1.0f, 1.0f,
@@ -353,7 +355,7 @@ public class Car3DView extends SurfaceView
         return entity;
     }
 
-    // Lumière qui suit la position de la caméra.
+    // La lumière frontale suit la caméra.
     private void updateCameraLight(
             double cx,
             double cy,
@@ -393,7 +395,7 @@ public class Car3DView extends SurfaceView
         );
     }
 
-    // Chargement du modèle BMW.
+    // Chargement du modèle 3D.
     private void loadCarModel() throws Exception {
 
         materialProvider = new UbershaderProvider(engine);
@@ -441,7 +443,7 @@ public class Car3DView extends SurfaceView
         updateModel();
     }
 
-    // Lecture des fichiers dans assets.
+    // Lecture des fichiers assets.
     private ByteBuffer readAsset(String name)
             throws Exception {
 
@@ -474,7 +476,7 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Centrage et mise à l'échelle.
+    // Centrage et mise à l'échelle du véhicule.
     private void updateModel() {
 
         if (asset == null || engine == null) {
@@ -516,7 +518,7 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Caméra orbitale.
+    // Position de la caméra.
     private void updateCamera() {
 
         if (camera == null) {
@@ -556,7 +558,7 @@ public class Car3DView extends SurfaceView
         updateCameraLight(cx, cy, cz);
     }
 
-    // Affichage de la scène.
+    // Affichage de la scène 3D.
     private void drawFrame(long frameTimeNanos) {
 
         if (engine == null ||
@@ -638,7 +640,7 @@ public class Car3DView extends SurfaceView
         );
     }
 
-    // Rotation tactile et zoom.
+    // Rotation tactile et zoom à deux doigts.
     @Override
     public boolean onTouchEvent(MotionEvent event) {
 
