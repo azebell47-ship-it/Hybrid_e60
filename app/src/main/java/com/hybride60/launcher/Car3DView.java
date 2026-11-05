@@ -134,7 +134,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                 materialProvider = new UbershaderProvider(engine);
                 assetLoader = new AssetLoader(engine, materialProvider, EntityManager.get());
                 resourceLoader = new ResourceLoader(engine);
-                asset = assetLoader.createAsset(readAsset("bmw_m5_e60.glb"));
+                asset = assetLoader.createAsset(readAsset("bmw_m5_e60_gris_test.glb"));
                 if (asset == null) throw new IllegalStateException("GLB non reconnu");
                 resourceLoader.loadResources(asset);
                 scene.addEntities(asset.getEntities());
