@@ -31,7 +31,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-/** Opaque Filament surface: no accumulation of previous car positions. */
+/** Test de diagnostic Filament : rendu opaque sans post-traitement. */
 public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private static final String TAG = "HybridE60";
 
@@ -90,6 +90,8 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
                 // Fully opaque output: every new frame replaces the previous image.
                 view.setBlendMode(View.BlendMode.OPAQUE);
+                // Diagnostic: désactiver les effets temporels et le post-traitement.
+                view.setPostProcessingEnabled(false);
 
                 lightEntity = EntityManager.get().create();
                 new LightManager.Builder(LightManager.Type.SUN)
