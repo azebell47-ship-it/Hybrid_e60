@@ -47,8 +47,12 @@ public class Car3DView extends SurfaceView
     private static final String IBL_FILE =
             "RNF_default_env_ibl.ktx";
 
-    // Intensité volontairement élevée pour le test.
-    private static final float IBL_INTENSITY = 100000f;
+    // Éclairage indirect.
+    private static final float IBL_INTENSITY = 30000f;
+
+    // Lumière qui suit la caméra.
+    // Augmenter progressivement si nécessaire.
+    private static final float CAMERA_LIGHT_INTENSITY = 45000f;
 
     private Engine engine;
     private Renderer renderer;
@@ -65,8 +69,11 @@ public class Car3DView extends SurfaceView
     private IndirectLight indirectLight;
 
     private int cameraEntity;
-    private final int[] lightEntities = new int[3];
+    private int cameraLightEntity;
 
+    private final int[] fixedLights = new int[3];
+
+    // Caméra orbitale.
     private float yaw = -55f;
     private float pitch = 12f;
     private float orbitRadius = 3.8f;
@@ -77,6 +84,7 @@ public class Car3DView extends SurfaceView
 
     private float previousPinchDistance;
     private boolean pinching = false;
+    private boolean touching = false;
 
     private float yawVelocity = 0f;
     private float pitchVelocity = 0f;
@@ -87,13 +95,16 @@ public class Car3DView extends SurfaceView
     private boolean running = false;
     private long lastFrameNanos = 0L;
 
+    // Animation.
     private final Choreographer.FrameCallback frameCallback =
             new Choreographer.FrameCallback() {
 
         @Override
         public void doFrame(long frameTimeNanos) {
 
-            if (!running) return;
+            if (!running) {
+                return;
+            }
 
             if (lastFrameNanos != 0L) {
 
@@ -103,7 +114,7 @@ public class Car3DView extends SurfaceView
                                 / 1_000_000_000f
                 );
 
-                if (!pinching &&
+                if (!touching && !pinching &&
                         Math.abs(yawVelocity)
                         + Math.abs(pitchVelocity) > 0.02f) {
 
@@ -123,6 +134,10 @@ public class Car3DView extends SurfaceView
 
                     updateCamera();
 
+                } else if (touching || pinching) {
+
+                    // La caméra est pilotée par le doigt.
+
                 } else {
 
                     yawVelocity = 0f;
@@ -135,6 +150,7 @@ public class Car3DView extends SurfaceView
             drawFrame(frameTimeNanos);
 
             if (running) {
+
                 Choreographer.getInstance()
                         .postFrameCallback(this);
             }
@@ -196,7 +212,7 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Initialisation du moteur Filament.
+    // Initialisation Filament.
     private void initializeFilament() {
 
         com.google.android.filament.Filament.init();
@@ -206,13 +222,13 @@ public class Car3DView extends SurfaceView
 
         renderer = engine.createRenderer();
 
-        // Fond noir.
         Renderer.ClearOptions clearOptions =
                 new Renderer.ClearOptions();
 
         clearOptions.clear = true;
         clearOptions.discard = true;
 
+        // Fond noir.
         clearOptions.clearColor =
                 new float[]{0f, 0f, 0f, 1f};
 
@@ -232,12 +248,13 @@ public class Car3DView extends SurfaceView
         view.setPostProcessingEnabled(false);
     }
 
-    // Éclairage indirect IBL.
+    // Chargement de l'environnement lumineux.
     private void initializeIBL() {
 
         try {
 
-            ByteBuffer iblBuffer = readAsset(IBL_FILE);
+            ByteBuffer iblBuffer =
+                    readAsset(IBL_FILE);
 
             KTX1Loader.Options options =
                     new KTX1Loader.Options();
@@ -252,90 +269,135 @@ public class Car3DView extends SurfaceView
             if (indirectLight == null) {
 
                 throw new IllegalStateException(
-                        "Création de l'IBL impossible"
+                        "Création IBL impossible"
                 );
             }
 
-            // Test à 100 000.
             indirectLight.setIntensity(IBL_INTENSITY);
 
             scene.setIndirectLight(indirectLight);
 
-            // Pas de skybox : fond noir conservé.
+            // Pas de skybox :
+            // le fond reste noir.
 
-            Log.i(
-                    TAG,
-                    "IBL activé avec intensité "
-                            + IBL_INTENSITY
-            );
+            Log.i(TAG, "IBL chargé avec succès");
 
         } catch (Throwable error) {
 
-            Log.e(TAG, "Erreur chargement IBL", error);
+            Log.e(TAG, "Erreur IBL", error);
 
             indirectLight = null;
 
             Toast.makeText(
                     getContext(),
-                    "IBL non chargé : vérifie le KTX",
+                    "IBL non chargé",
                     Toast.LENGTH_LONG
             ).show();
         }
     }
 
-    // Lumières complémentaires.
+    // Lumières fixes + lumière caméra.
     private void initializeLights() {
 
-        addDirectionalLight(
-                0,
+        // Lumière principale venant du dessus.
+        fixedLights[0] = createDirectionalLight(
                 35000f,
                 1.0f, 0.98f, 0.96f,
                 -0.4f, -1.0f, -0.4f
         );
 
-        addDirectionalLight(
-                1,
+        // Éclairage doux côté gauche.
+        fixedLights[1] = createDirectionalLight(
                 12000f,
                 1.0f, 1.0f, 1.0f,
                 1.0f, -0.4f, 0.0f
         );
 
-        addDirectionalLight(
-                2,
+        // Éclairage doux côté droit.
+        fixedLights[2] = createDirectionalLight(
                 12000f,
                 0.96f, 0.98f, 1.0f,
                 -1.0f, -0.4f, 0.0f
         );
+
+        // Lumière frontale qui suivra la caméra.
+        cameraLightEntity = createDirectionalLight(
+                CAMERA_LIGHT_INTENSITY,
+                1.0f, 1.0f, 1.0f,
+                0.0f, -0.4f, -1.0f
+        );
     }
 
-    private void addDirectionalLight(
-            int index,
+    private int createDirectionalLight(
             float intensity,
             float red,
             float green,
             float blue,
-            float directionX,
-            float directionY,
-            float directionZ) {
+            float dx,
+            float dy,
+            float dz) {
 
         int entity = EntityManager.get().create();
-
-        lightEntities[index] = entity;
 
         new LightManager.Builder(
                 LightManager.Type.DIRECTIONAL
         )
                 .color(red, green, blue)
                 .intensity(intensity)
-                .direction(
-                        directionX,
-                        directionY,
-                        directionZ
-                )
+                .direction(dx, dy, dz)
                 .castShadows(false)
                 .build(engine, entity);
 
         scene.addEntity(entity);
+
+        return entity;
+    }
+
+    // Met à jour la direction de la lumière
+    // en fonction de la caméra.
+    private void updateCameraLight(
+            double cx,
+            double cy,
+            double cz) {
+
+        if (engine == null || cameraLightEntity == 0) {
+            return;
+        }
+
+        LightManager manager =
+                engine.getLightManager();
+
+        int instance =
+                manager.getInstance(cameraLightEntity);
+
+        if (instance == 0) {
+            return;
+        }
+
+        // La lumière se dirige de la caméra
+        // vers le centre du véhicule.
+        float dx = (float) -cx;
+        float dy = (float) -cy;
+        float dz = (float) -cz;
+
+        float length = (float) Math.sqrt(
+                dx * dx + dy * dy + dz * dz
+        );
+
+        if (length < 0.0001f) {
+            return;
+        }
+
+        dx /= length;
+        dy /= length;
+        dz /= length;
+
+        manager.setDirection(
+                instance,
+                dx,
+                dy,
+                dz
+        );
     }
 
     // Chargement du modèle BMW.
@@ -366,8 +428,11 @@ public class Car3DView extends SurfaceView
 
         scene.addEntities(asset.getEntities());
 
-        float[] c = asset.getBoundingBox().getCenter();
-        float[] e = asset.getBoundingBox().getHalfExtent();
+        float[] c =
+                asset.getBoundingBox().getCenter();
+
+        float[] e =
+                asset.getBoundingBox().getHalfExtent();
 
         System.arraycopy(c, 0, center, 0, 3);
 
@@ -399,6 +464,7 @@ public class Car3DView extends SurfaceView
             int count;
 
             while ((count = in.read(buffer)) != -1) {
+
                 out.write(buffer, 0, count);
             }
 
@@ -418,7 +484,9 @@ public class Car3DView extends SurfaceView
     // Centrage et mise à l'échelle.
     private void updateModel() {
 
-        if (asset == null || engine == null) return;
+        if (asset == null || engine == null) {
+            return;
+        }
 
         float[] normalization = new float[16];
 
@@ -455,10 +523,12 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Caméra orbitale.
+    // Mise à jour de la caméra.
     private void updateCamera() {
 
-        if (camera == null) return;
+        if (camera == null) {
+            return;
+        }
 
         double yr = Math.toRadians(yaw);
         double pr = Math.toRadians(pitch);
@@ -488,9 +558,12 @@ public class Car3DView extends SurfaceView
                 100.0,
                 Camera.Fov.VERTICAL
         );
+
+        // NOUVEAU : la lumière suit la caméra.
+        updateCameraLight(cx, cy, cz);
     }
 
-    // Affichage des images.
+    // Rendu de la scène.
     private void drawFrame(long frameTimeNanos) {
 
         if (engine == null ||
@@ -582,13 +655,13 @@ public class Car3DView extends SurfaceView
 
                 lastX = event.getX();
                 lastY = event.getY();
-
                 lastTouchTime = event.getEventTime();
 
                 yawVelocity = 0f;
                 pitchVelocity = 0f;
 
                 pinching = false;
+                touching = true;
 
                 return true;
 
@@ -629,7 +702,6 @@ public class Car3DView extends SurfaceView
                     }
 
                     previousPinchDistance = distance;
-
                     pinching = true;
 
                 } else if (!pinching) {
@@ -671,7 +743,6 @@ public class Car3DView extends SurfaceView
 
                     lastX = x;
                     lastY = y;
-
                     lastTouchTime = currentTime;
 
                     updateCamera();
@@ -702,11 +773,16 @@ public class Car3DView extends SurfaceView
 
             case MotionEvent.ACTION_UP:
 
+                touching = false;
                 pinching = false;
+
+                // On conserve la vitesse de rotation
+                // pour permettre l'inertie.
                 return true;
 
             case MotionEvent.ACTION_CANCEL:
 
+                touching = false;
                 pinching = false;
 
                 yawVelocity = 0f;
