@@ -8,11 +8,11 @@ import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.widget.Toast;
 
 import com.google.android.filament.Camera;
 import com.google.android.filament.Engine;
 import com.google.android.filament.EntityManager;
-import com.google.android.filament.IndirectLight;
 import com.google.android.filament.LightManager;
 import com.google.android.filament.Renderer;
 import com.google.android.filament.Scene;
@@ -35,7 +35,10 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
     private static final String TAG = "HybridE60";
     private static final String MODEL_FILE = "bmw_m5_e60_gris_test.glb";
-    private static final float CAMERA_LIGHT_INTENSITY = 14000f;
+
+    // Pas de KTX1Loader : evite l'UnsatisfiedLinkError observe.
+    // Intensites volontairement equilibrees pour eviter les reflets brules.
+    private static final float CAMERA_LIGHT_INTENSITY = 17000f;
 
     private Engine engine;
     private Renderer renderer;
@@ -48,15 +51,15 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private ResourceLoader resourceLoader;
     private MaterialProvider materialProvider;
     private FilamentAsset asset;
-    private IndirectLight indirectLight;
 
     private int cameraEntity;
     private int cameraLightEntity;
-    private final int[] fixedLights = new int[3];
+    private final int[] fixedLights = new int[6];
 
     private float yaw = -55f;
     private float pitch = 12f;
     private float orbitRadius = 3.8f;
+
     private float lastX;
     private float lastY;
     private long lastTouchTime;
@@ -65,35 +68,38 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private boolean touching = false;
     private float yawVelocity = 0f;
     private float pitchVelocity = 0f;
+
     private float modelScale = 1f;
     private final float[] center = new float[3];
     private boolean running = false;
     private long lastFrameNanos = 0L;
 
-    private final Choreographer.FrameCallback frameCallback = new Choreographer.FrameCallback() {
-        @Override
-        public void doFrame(long frameTimeNanos) {
-            if (!running) return;
-            if (lastFrameNanos != 0L) {
-                float dt = Math.min(0.05f, (frameTimeNanos - lastFrameNanos) / 1_000_000_000f);
-                if (!touching && !pinching &&
-                        Math.abs(yawVelocity) + Math.abs(pitchVelocity) > 0.02f) {
-                    yaw += yawVelocity * dt;
-                    pitch = clamp(pitch + pitchVelocity * dt, -55f, 65f);
-                    float damping = (float) Math.exp(-5.5f * dt);
-                    yawVelocity *= damping;
-                    pitchVelocity *= damping;
-                    updateCamera();
-                } else if (!touching && !pinching) {
-                    yawVelocity = 0f;
-                    pitchVelocity = 0f;
+    private final Choreographer.FrameCallback frameCallback =
+            new Choreographer.FrameCallback() {
+                @Override
+                public void doFrame(long frameTimeNanos) {
+                    if (!running) return;
+                    if (lastFrameNanos != 0L) {
+                        float dt = Math.min(0.05f,
+                                (frameTimeNanos - lastFrameNanos) / 1_000_000_000f);
+                        if (!touching && !pinching &&
+                                Math.abs(yawVelocity) + Math.abs(pitchVelocity) > 0.02f) {
+                            yaw += yawVelocity * dt;
+                            pitch = clamp(pitch + pitchVelocity * dt, -55f, 65f);
+                            float damping = (float) Math.exp(-5.5f * dt);
+                            yawVelocity *= damping;
+                            pitchVelocity *= damping;
+                            updateCamera();
+                        } else if (!touching && !pinching) {
+                            yawVelocity = 0f;
+                            pitchVelocity = 0f;
+                        }
+                    }
+                    lastFrameNanos = frameTimeNanos;
+                    drawFrame(frameTimeNanos);
+                    if (running) Choreographer.getInstance().postFrameCallback(this);
                 }
-            }
-            lastFrameNanos = frameTimeNanos;
-            drawFrame(frameTimeNanos);
-            if (running) Choreographer.getInstance().postFrameCallback(this);
-        }
-    };
+            };
 
     public Car3DView(Context context) {
         super(context);
@@ -107,11 +113,12 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         try {
             if (engine == null) {
                 initializeFilament();
-                initializeAmbientLight();
                 initializeLights();
                 loadCarModel();
             }
-            if (swapChain == null) swapChain = engine.createSwapChain(holder.getSurface());
+            if (swapChain == null) {
+                swapChain = engine.createSwapChain(holder.getSurface());
+            }
             updateCamera();
             running = true;
             lastFrameNanos = 0L;
@@ -119,16 +126,16 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
             Choreographer.getInstance().postFrameCallback(frameCallback);
         } catch (Throwable error) {
             running = false;
-            Log.e(TAG, "Erreur Filament", error);
-            post(() -> android.widget.Toast.makeText(getContext(),
-                    "Erreur 3D : " + error.getClass().getSimpleName(),
-                    android.widget.Toast.LENGTH_LONG).show());
+            Log.e(TAG, "Erreur initialisation 3D", error);
+            Toast.makeText(getContext(), "Erreur 3D : " + error.getMessage(),
+                    Toast.LENGTH_LONG).show();
         }
     }
 
     private void initializeFilament() {
         com.google.android.filament.Filament.init();
         com.google.android.filament.gltfio.Gltfio.init();
+
         engine = Engine.create();
         renderer = engine.createRenderer();
         Renderer.ClearOptions clearOptions = new Renderer.ClearOptions();
@@ -136,6 +143,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         clearOptions.discard = true;
         clearOptions.clearColor = new float[]{0f, 0f, 0f, 1f};
         renderer.setClearOptions(clearOptions);
+
         scene = engine.createScene();
         view = engine.createView();
         cameraEntity = EntityManager.get().create();
@@ -146,40 +154,35 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         view.setPostProcessingEnabled(false);
     }
 
-    // Lumiere ambiante diffuse, sans fichier KTX et sans KTX1Loader.
-    // Les 9 coefficients RGB correspondent aux harmoniques spheriques (3 bandes).
-    // Seul le coefficient constant est utilise pour un eclairage uniforme.
-    private void initializeAmbientLight() {
-        try {
-            float[] sh = new float[27];
-            sh[0] = 0.85f;
-            sh[1] = 0.85f;
-            sh[2] = 0.85f;
-            indirectLight = new IndirectLight.Builder()
-                    .irradiance(3, sh)
-                    .intensity(30000f)
-                    .build(engine);
-            scene.setIndirectLight(indirectLight);
-            Log.i(TAG, "Eclairage ambiant SH actif (sans KTX)");
-        } catch (Throwable error) {
-            indirectLight = null;
-            Log.e(TAG, "Eclairage ambiant indisponible; lumieres directes conservees", error);
-        }
-    }
-
     private void initializeLights() {
-        fixedLights[0] = createDirectionalLight(30000f, 1f, .98f, .96f,
-                -.3f, -1f, -.3f);
-        fixedLights[1] = createDirectionalLight(18000f, 1f, 1f, 1f,
-                1f, -.3f, 0f);
-        fixedLights[2] = createDirectionalLight(18000f, .96f, .98f, 1f,
-                -1f, -.3f, 0f);
+        // Les directions Filament indiquent la direction des rayons.
+        // Deux grandes sources laterales, symetriques.
+        fixedLights[0] = createDirectionalLight(28000f,
+                1.00f, 0.99f, 0.97f, -1.0f, -0.65f, -0.25f);
+        fixedLights[1] = createDirectionalLight(28000f,
+                0.97f, 0.98f, 1.00f,  1.0f, -0.65f,  0.25f);
+
+        // Eclairage doux du toit, sans pic lumineux excessif.
+        fixedLights[2] = createDirectionalLight(15000f,
+                1.00f, 1.00f, 1.00f, 0.0f, -1.0f, 0.0f);
+
+        // Remplissage avant / arriere pour la rotation complete.
+        fixedLights[3] = createDirectionalLight(19000f,
+                1.00f, 0.99f, 0.98f, -0.15f, -0.40f, -1.0f);
+        fixedLights[4] = createDirectionalLight(19000f,
+                0.98f, 0.99f, 1.00f,  0.15f, -0.40f,  1.0f);
+
+        // Petite source oblique pour faire ressortir les formes.
+        fixedLights[5] = createDirectionalLight(9000f,
+                1.00f, 1.00f, 1.00f, -0.7f, -0.4f, 0.7f);
+
         cameraLightEntity = createDirectionalLight(CAMERA_LIGHT_INTENSITY,
-                1f, 1f, 1f, 0f, -.4f, -1f);
+                1.0f, 1.0f, 1.0f, 0.0f, -0.4f, -1.0f);
     }
 
-    private int createDirectionalLight(float intensity, float red, float green,
-                                       float blue, float dx, float dy, float dz) {
+    private int createDirectionalLight(float intensity,
+                                       float red, float green, float blue,
+                                       float dx, float dy, float dz) {
         int entity = EntityManager.get().create();
         new LightManager.Builder(LightManager.Type.DIRECTIONAL)
                 .color(red, green, blue)
@@ -212,6 +215,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         if (asset == null) throw new IllegalStateException("Modele GLB non reconnu");
         resourceLoader.loadResources(asset);
         scene.addEntities(asset.getEntities());
+
         float[] c = asset.getBoundingBox().getCenter();
         float[] e = asset.getBoundingBox().getHalfExtent();
         System.arraycopy(c, 0, center, 0, 3);
@@ -240,7 +244,8 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         float[] normalization = new float[16];
         Matrix.setIdentityM(normalization, 0);
         Matrix.scaleM(normalization, 0, modelScale, modelScale, modelScale);
-        Matrix.translateM(normalization, 0, -center[0], -center[1], -center[2]);
+        Matrix.translateM(normalization, 0,
+                -center[0], -center[1], -center[2]);
         TransformManager manager = engine.getTransformManager();
         int instance = manager.getInstance(asset.getRoot());
         if (instance != 0) manager.setTransform(instance, normalization);
@@ -256,13 +261,14 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         camera.lookAt(cx, cy, cz, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
         int width = Math.max(1, getWidth());
         int height = Math.max(1, getHeight());
-        camera.setProjection(40.0, (double) width / height, 0.1, 100.0,
-                Camera.Fov.VERTICAL);
+        camera.setProjection(40.0, (double) width / height,
+                0.1, 100.0, Camera.Fov.VERTICAL);
         updateCameraLight(cx, cy, cz);
     }
 
     private void drawFrame(long frameTimeNanos) {
-        if (engine == null || renderer == null || swapChain == null || view == null) return;
+        if (engine == null || renderer == null || swapChain == null || view == null)
+            return;
         if (renderer.beginFrame(swapChain, frameTimeNanos)) {
             renderer.render(view);
             renderer.endFrame();
@@ -270,9 +276,11 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+    public void surfaceChanged(SurfaceHolder holder, int format,
+                               int width, int height) {
         if (view != null) {
-            view.setViewport(new Viewport(0, 0, Math.max(1, width), Math.max(1, height)));
+            view.setViewport(new Viewport(0, 0,
+                    Math.max(1, width), Math.max(1, height)));
         }
         updateCamera();
     }
@@ -324,8 +332,8 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                 if (event.getPointerCount() >= 2) {
                     float distance = pointerDistance(event);
                     if (previousPinchDistance > 10f && distance > 10f) {
-                        orbitRadius = clamp(orbitRadius * previousPinchDistance / distance,
-                                2.5f, 9f);
+                        orbitRadius = clamp(orbitRadius * previousPinchDistance
+                                / distance, 2.5f, 9f);
                         updateCamera();
                     }
                     previousPinchDistance = distance;
@@ -336,7 +344,8 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                     float dx = x - lastX;
                     float dy = y - lastY;
                     long currentTime = event.getEventTime();
-                    float dt = Math.max(0.008f, (currentTime - lastTouchTime) / 1000f);
+                    float dt = Math.max(0.008f,
+                            (currentTime - lastTouchTime) / 1000f);
                     yaw += dx * 0.5f;
                     pitch = clamp(pitch + dy * 0.3f, -55f, 65f);
                     yawVelocity = clamp(dx * 0.5f / dt, -240f, 240f);
