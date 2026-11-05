@@ -31,7 +31,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-/** Test de diagnostic Filament : rendu opaque sans post-traitement. */
+/** Diagnostic : rotation par camera orbitale, modele immobile. */
 public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private static final String TAG = "HybridE60";
 
@@ -91,7 +91,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                 // Fully opaque output: every new frame replaces the previous image.
                 view.setBlendMode(View.BlendMode.OPAQUE);
                 // Diagnostic: désactiver les effets temporels et le post-traitement.
-                view.setPostProcessingEnabled(false);
+                view.setPostProcessingEnabled(true);
 
                 lightEntity = EntityManager.get().create();
                 new LightManager.Builder(LightManager.Type.SUN)
@@ -149,8 +149,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
         if (asset == null || engine == null) return;
         float[] rotation = new float[16];
         Matrix.setIdentityM(rotation, 0);
-        Matrix.rotateM(rotation, 0, pitch, 1f, 0f, 0f);
-        Matrix.rotateM(rotation, 0, yaw, 0f, 1f, 0f);
+        // Rotation désactivée côté modèle : test de la caméra orbitale.
 
         float[] normalization = new float[16];
         Matrix.setIdentityM(normalization, 0);
@@ -166,7 +165,13 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
 
     private void updateCamera() {
         if (camera == null) return;
-        camera.lookAt(0.0, 0.3, 5.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
+        double yr = Math.toRadians(yaw);
+        double pr = Math.toRadians(pitch);
+        double radius = 5.0;
+        double cx = radius * Math.sin(yr) * Math.cos(pr);
+        double cy = radius * Math.sin(pr);
+        double cz = radius * Math.cos(yr) * Math.cos(pr);
+        camera.lookAt(cx, cy, cz, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
         int width = Math.max(1, getWidth());
         int height = Math.max(1, getHeight());
         camera.setProjection(45.0, (double) width / height, 0.1, 100.0, Camera.Fov.VERTICAL);
@@ -211,7 +216,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                 pitch = Math.max(-45f, Math.min(45f, pitch + (y - lastY) * 0.3f));
                 lastX = x;
                 lastY = y;
-                updateModel();
+                updateCamera();
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
