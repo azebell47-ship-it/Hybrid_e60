@@ -14,6 +14,7 @@ import android.widget.Toast;
 import com.google.android.filament.Camera;
 import com.google.android.filament.Engine;
 import com.google.android.filament.EntityManager;
+import com.google.android.filament.IndirectLight;
 import com.google.android.filament.LightManager;
 import com.google.android.filament.Renderer;
 import com.google.android.filament.Scene;
@@ -28,6 +29,8 @@ import com.google.android.filament.gltfio.MaterialProvider;
 import com.google.android.filament.gltfio.ResourceLoader;
 import com.google.android.filament.gltfio.UbershaderProvider;
 
+import com.google.android.filament.utils.KTX1Loader;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -41,6 +44,12 @@ public class Car3DView extends SurfaceView
     private static final String MODEL_FILE =
             "bmw_m5_e60_gris_test.glb";
 
+    private static final String IBL_FILE =
+            "RNF_default_env_ibl.ktx";
+
+    // Intensité de l'éclairage d'environnement.
+    private static final float IBL_INTENSITY = 30000f;
+
     private Engine engine;
     private Renderer renderer;
     private Scene scene;
@@ -53,12 +62,11 @@ public class Car3DView extends SurfaceView
     private MaterialProvider materialProvider;
     private FilamentAsset asset;
 
+    private IndirectLight indirectLight;
+
     private int cameraEntity;
+    private final int[] lightEntities = new int[3];
 
-    // Six lumières autour du véhicule.
-    private final int[] lightEntities = new int[6];
-
-    // Position initiale de la caméra.
     private float yaw = -55f;
     private float pitch = 12f;
     private float orbitRadius = 3.8f;
@@ -79,16 +87,13 @@ public class Car3DView extends SurfaceView
     private boolean running = false;
     private long lastFrameNanos = 0L;
 
-    // Animation et inertie de rotation.
     private final Choreographer.FrameCallback frameCallback =
             new Choreographer.FrameCallback() {
 
         @Override
         public void doFrame(long frameTimeNanos) {
 
-            if (!running) {
-                return;
-            }
+            if (!running) return;
 
             if (lastFrameNanos != 0L) {
 
@@ -146,7 +151,6 @@ public class Car3DView extends SurfaceView
         setFocusable(true);
     }
 
-    // Initialisation de la surface.
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
 
@@ -155,6 +159,8 @@ public class Car3DView extends SurfaceView
             if (engine == null) {
 
                 initializeFilament();
+
+                initializeIBL();
 
                 initializeLights();
 
@@ -193,7 +199,7 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Initialisation du moteur Filament.
+    // Initialisation du moteur 3D.
     private void initializeFilament() {
 
         com.google.android.filament.Filament.init();
@@ -203,13 +209,13 @@ public class Car3DView extends SurfaceView
 
         renderer = engine.createRenderer();
 
-        // Fond noir.
         Renderer.ClearOptions clearOptions =
                 new Renderer.ClearOptions();
 
         clearOptions.clear = true;
         clearOptions.discard = true;
 
+        // Fond noir.
         clearOptions.clearColor =
                 new float[]{0f, 0f, 0f, 1f};
 
@@ -227,63 +233,91 @@ public class Car3DView extends SurfaceView
 
         view.setBlendMode(View.BlendMode.OPAQUE);
 
-        // Configuration stable du rendu.
+        // On conserve ton rendu stable.
         view.setPostProcessingEnabled(false);
     }
 
-    // Éclairage réparti sur 360 degrés.
+    // NOUVEAU : éclairage indirect IBL.
+    private void initializeIBL() {
+
+        try {
+
+            ByteBuffer iblBuffer =
+                    readAsset(IBL_FILE);
+
+            KTX1Loader.Options options =
+                    new KTX1Loader.Options();
+
+            indirectLight =
+                    KTX1Loader.INSTANCE.createIndirectLight(
+                            engine,
+                            iblBuffer,
+                            options
+                    );
+
+            if (indirectLight == null) {
+                throw new IllegalStateException(
+                        "Création de l'IBL impossible"
+                );
+            }
+
+            indirectLight.setIntensity(IBL_INTENSITY);
+
+            scene.setIndirectLight(indirectLight);
+
+            // Aucun skybox :
+            // le fond reste entièrement noir.
+
+            Log.i(TAG, "Éclairage IBL activé");
+
+        } catch (Throwable error) {
+
+            Log.e(
+                    TAG,
+                    "Impossible de charger l'IBL",
+                    error
+            );
+
+            // Le modèle peut continuer à fonctionner
+            // avec les lumières classiques.
+            indirectLight = null;
+
+            Toast.makeText(
+                    getContext(),
+                    "IBL non chargé : vérifie le fichier KTX",
+                    Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    // Éclairage direct complémentaire.
     private void initializeLights() {
 
         // Lumière principale du dessus.
         addDirectionalLight(
                 0,
-                65000f,
+                35000f,
                 1.0f, 0.98f, 0.96f,
-                -0.35f, -1.0f, -0.45f
+                -0.4f, -1.0f, -0.4f
         );
 
-        // Lumière côté gauche.
+        // Lumière douce côté gauche.
         addDirectionalLight(
                 1,
-                45000f,
+                12000f,
                 1.0f, 1.0f, 1.0f,
-                1.0f, -0.35f, 0.0f
+                1.0f, -0.4f, 0.0f
         );
 
-        // Lumière côté droit.
+        // Lumière douce côté droit.
         addDirectionalLight(
                 2,
-                45000f,
+                12000f,
                 0.96f, 0.98f, 1.0f,
-                -1.0f, -0.35f, 0.0f
-        );
-
-        // Lumière avant.
-        addDirectionalLight(
-                3,
-                35000f,
-                1.0f, 1.0f, 1.0f,
-                0.0f, -0.35f, -1.0f
-        );
-
-        // Lumière arrière.
-        addDirectionalLight(
-                4,
-                35000f,
-                1.0f, 1.0f, 1.0f,
-                0.0f, -0.35f, 1.0f
-        );
-
-        // Lumière douce supplémentaire du dessus.
-        addDirectionalLight(
-                5,
-                18000f,
-                1.0f, 1.0f, 1.0f,
-                0.0f, -1.0f, 0.0f
+                -1.0f, -0.4f, 0.0f
         );
     }
 
-    // Création d'une lumière directionnelle.
     private void addDirectionalLight(
             int index,
             float intensity,
@@ -314,7 +348,7 @@ public class Car3DView extends SurfaceView
         scene.addEntity(entity);
     }
 
-    // Chargement du modèle BMW.
+    // Chargement de la BMW.
     private void loadCarModel() throws Exception {
 
         materialProvider = new UbershaderProvider(engine);
@@ -362,7 +396,7 @@ public class Car3DView extends SurfaceView
         updateModel();
     }
 
-    // Lecture du fichier GLB.
+    // Lecture des fichiers dans assets.
     private ByteBuffer readAsset(String name)
             throws Exception {
 
@@ -375,11 +409,9 @@ public class Car3DView extends SurfaceView
         ) {
 
             byte[] buffer = new byte[16384];
-
             int count;
 
             while ((count = in.read(buffer)) != -1) {
-
                 out.write(buffer, 0, count);
             }
 
@@ -396,12 +428,10 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Centrage et mise à l'échelle du véhicule.
+    // Centrage du modèle.
     private void updateModel() {
 
-        if (asset == null || engine == null) {
-            return;
-        }
+        if (asset == null || engine == null) return;
 
         float[] normalization = new float[16];
 
@@ -438,12 +468,10 @@ public class Car3DView extends SurfaceView
         }
     }
 
-    // Position et projection de la caméra.
+    // Caméra orbitale.
     private void updateCamera() {
 
-        if (camera == null) {
-            return;
-        }
+        if (camera == null) return;
 
         double yr = Math.toRadians(yaw);
         double pr = Math.toRadians(pitch);
@@ -475,7 +503,7 @@ public class Car3DView extends SurfaceView
         );
     }
 
-    // Affichage des images.
+    // Rendu.
     private void drawFrame(long frameTimeNanos) {
 
         if (engine == null ||
@@ -558,7 +586,7 @@ public class Car3DView extends SurfaceView
         );
     }
 
-    // Gestion tactile : rotation et zoom.
+    // Rotation tactile et zoom.
     @Override
     public boolean onTouchEvent(MotionEvent event) {
 
@@ -689,7 +717,6 @@ public class Car3DView extends SurfaceView
             case MotionEvent.ACTION_UP:
 
                 pinching = false;
-
                 return true;
 
             case MotionEvent.ACTION_CANCEL:
@@ -702,7 +729,6 @@ public class Car3DView extends SurfaceView
                 return true;
 
             default:
-
                 return true;
         }
     }
