@@ -14,6 +14,7 @@ import android.widget.Toast;
 import com.google.android.filament.Camera;
 import com.google.android.filament.Engine;
 import com.google.android.filament.EntityManager;
+import com.google.android.filament.IndirectLight;
 import com.google.android.filament.LightManager;
 import com.google.android.filament.Renderer;
 import com.google.android.filament.Scene;
@@ -38,22 +39,20 @@ public class Car3DView extends SurfaceView
 
     private static final String TAG = "HybridE60";
 
+    // MODELE BMW CORRIGE
     private static final String MODEL_FILE =
-            "bmw_m5_e60_gris_test.glb";
+            "bmw_e60_gris_corrige.glb";
 
-    // Couleur du showroom : gris anthracite.
-    private static final float BG_R = 0.075f;
-    private static final float BG_G = 0.085f;
-    private static final float BG_B = 0.105f;
+    // FOND SHOWROOM ANTHRACITE
+    private static final float BG_R = 0.055f;
+    private static final float BG_G = 0.065f;
+    private static final float BG_B = 0.080f;
 
-    // Eclairage principal.
-    private static final float KEY_LIGHT = 55000f;
-
-    // Eclairage secondaire.
-    private static final float FILL_LIGHT = 35000f;
-
-    // Eclairage qui suit la camera.
-    private static final float CAMERA_LIGHT = 42000f;
+    // ECLAIRAGE EQUILIBRE
+    private static final float AMBIENT = 18000f;
+    private static final float MAIN_LIGHT = 22000f;
+    private static final float SIDE_LIGHT = 16000f;
+    private static final float CAMERA_LIGHT = 13000f;
 
     private Engine engine;
     private Renderer renderer;
@@ -61,6 +60,8 @@ public class Car3DView extends SurfaceView
     private View view;
     private Camera camera;
     private SwapChain swapChain;
+
+    private IndirectLight indirectLight;
 
     private AssetLoader assetLoader;
     private ResourceLoader resourceLoader;
@@ -70,29 +71,33 @@ public class Car3DView extends SurfaceView
     private int cameraEntity;
     private int cameraLightEntity;
 
-    private final int[] fixedLights = new int[7];
+    private final int[] lights = new int[6];
 
+    // CAMERA ORBITALE
     private float yaw = -55f;
     private float pitch = 12f;
     private float orbitRadius = 3.8f;
 
+    // CONTROLES TACTILES
     private float lastX;
     private float lastY;
     private long lastTouchTime;
-
     private float previousPinchDistance;
-    private boolean pinching = false;
+
     private boolean touching = false;
+    private boolean pinching = false;
 
     private float yawVelocity = 0f;
     private float pitchVelocity = 0f;
 
+    // NORMALISATION DU MODELE
     private float modelScale = 1f;
     private final float[] center = new float[3];
 
     private boolean running = false;
     private long lastFrameNanos = 0L;
 
+    // ANIMATION
     private final Choreographer.FrameCallback frameCallback =
             new Choreographer.FrameCallback() {
 
@@ -148,6 +153,7 @@ public class Car3DView extends SurfaceView
     };
 
     public Car3DView(Context context) {
+
         super(context);
 
         getHolder().setFormat(PixelFormat.OPAQUE);
@@ -156,18 +162,22 @@ public class Car3DView extends SurfaceView
         setFocusable(true);
     }
 
+    // INITIALISATION SURFACE
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
 
         try {
 
             if (engine == null) {
+
                 initializeFilament();
+                initializeEnvironment();
                 initializeLights();
                 loadCarModel();
             }
 
             if (swapChain == null) {
+
                 swapChain = engine.createSwapChain(
                         holder.getSurface()
                 );
@@ -188,40 +198,39 @@ public class Car3DView extends SurfaceView
 
             running = false;
 
-            Log.e(TAG, "Erreur initialisation 3D", error);
+            Log.e(TAG, "Erreur initialisation BMW", error);
 
             Toast.makeText(
                     getContext(),
-                    "Erreur 3D : " + error.getMessage(),
+                    "Erreur BMW 3D : " + error.getMessage(),
                     Toast.LENGTH_LONG
             ).show();
         }
     }
 
+    // MOTEUR FILAMENT
     private void initializeFilament() {
 
         com.google.android.filament.Filament.init();
         com.google.android.filament.gltfio.Gltfio.init();
 
         engine = Engine.create();
-
         renderer = engine.createRenderer();
 
-        Renderer.ClearOptions clearOptions =
+        Renderer.ClearOptions options =
                 new Renderer.ClearOptions();
 
-        clearOptions.clear = true;
-        clearOptions.discard = true;
+        options.clear = true;
+        options.discard = true;
 
-        // Fond gris anthracite.
-        clearOptions.clearColor = new float[]{
+        options.clearColor = new float[]{
                 BG_R,
                 BG_G,
                 BG_B,
-                1.0f
+                1f
         };
 
-        renderer.setClearOptions(clearOptions);
+        renderer.setClearOptions(options);
 
         scene = engine.createScene();
         view = engine.createView();
@@ -234,74 +243,95 @@ public class Car3DView extends SurfaceView
 
         view.setBlendMode(View.BlendMode.OPAQUE);
 
-        // Active le post-traitement Filament.
+        // Post-traitement
         view.setPostProcessingEnabled(true);
+
+        // Exposition fixe
+        camera.setExposure(
+                16f,
+                1f / 125f,
+                100f
+        );
     }
 
+    // LUMIERE AMBIANTE DIFFUSE
+    private void initializeEnvironment() {
+
+        // 9 coefficients RGB = 27 valeurs.
+        float[] sh = new float[27];
+
+        // Premier coefficient : eclairage uniforme.
+        // Facteur SH pour une radiance constante.
+        sh[0] = 0.8f / 0.282095f;
+        sh[1] = 0.82f / 0.282095f;
+        sh[2] = 0.85f / 0.282095f;
+
+        indirectLight = new IndirectLight.Builder()
+                .irradiance(3, sh)
+                .intensity(AMBIENT)
+                .build(engine);
+
+        scene.setIndirectLight(indirectLight);
+    }
+
+    // ECLAIRAGE SHOWROOM 360 DEGRES
     private void initializeLights() {
 
-        // Grande lumiere principale gauche.
-        fixedLights[0] = createDirectionalLight(
-                KEY_LIGHT,
-                1.00f, 0.99f, 0.97f,
-                -1.0f, -0.65f, -0.35f
+        // GAUCHE
+        lights[0] = createDirectionalLight(
+                MAIN_LIGHT,
+                1f, 0.99f, 0.98f,
+                -1f, -0.7f, 0f
         );
 
-        // Grande lumiere principale droite.
-        fixedLights[1] = createDirectionalLight(
-                KEY_LIGHT,
-                0.97f, 0.98f, 1.00f,
-                1.0f, -0.65f, 0.35f
+        // DROITE
+        lights[1] = createDirectionalLight(
+                MAIN_LIGHT,
+                0.98f, 0.99f, 1f,
+                1f, -0.7f, 0f
         );
 
-        // Eclairage du toit.
-        fixedLights[2] = createDirectionalLight(
-                30000f,
-                1.0f, 1.0f, 1.0f,
-                0.0f, -1.0f, 0.0f
+        // TOIT
+        lights[2] = createDirectionalLight(
+                17000f,
+                1f, 1f, 1f,
+                0f, -1f, 0f
         );
 
-        // Remplissage avant.
-        fixedLights[3] = createDirectionalLight(
-                FILL_LIGHT,
-                1.0f, 0.99f, 0.98f,
-                -0.15f, -0.35f, -1.0f
+        // AVANT
+        lights[3] = createDirectionalLight(
+                SIDE_LIGHT,
+                1f, 1f, 1f,
+                0f, -0.5f, -1f
         );
 
-        // Remplissage arriere.
-        fixedLights[4] = createDirectionalLight(
-                FILL_LIGHT,
-                0.98f, 0.99f, 1.0f,
-                0.15f, -0.35f, 1.0f
+        // ARRIERE
+        lights[4] = createDirectionalLight(
+                SIDE_LIGHT,
+                1f, 1f, 1f,
+                0f, -0.5f, 1f
         );
 
-        // Lumiere oblique pour les lignes.
-        fixedLights[5] = createDirectionalLight(
-                22000f,
-                1.0f, 1.0f, 1.0f,
-                -0.7f, -0.4f, 0.7f
+        // OBLIQUE
+        lights[5] = createDirectionalLight(
+                9000f,
+                1f, 1f, 1f,
+                -0.7f, -0.5f, 0.7f
         );
 
-        // Remplissage oppose.
-        fixedLights[6] = createDirectionalLight(
-                22000f,
-                0.98f, 0.99f, 1.0f,
-                0.7f, -0.4f, -0.7f
-        );
-
-        // Source qui suit la camera.
+        // LUMIERE CAMERA
         cameraLightEntity = createDirectionalLight(
                 CAMERA_LIGHT,
-                1.0f, 1.0f, 1.0f,
-                0.0f, -0.4f, -1.0f
+                1f, 1f, 1f,
+                0f, -0.4f, -1f
         );
     }
 
     private int createDirectionalLight(
             float intensity,
-            float red,
-            float green,
-            float blue,
+            float r,
+            float g,
+            float b,
             float dx,
             float dy,
             float dz) {
@@ -311,7 +341,7 @@ public class Car3DView extends SurfaceView
         new LightManager.Builder(
                 LightManager.Type.DIRECTIONAL
         )
-                .color(red, green, blue)
+                .color(r, g, b)
                 .intensity(intensity)
                 .direction(dx, dy, dz)
                 .castShadows(false)
@@ -322,16 +352,17 @@ public class Car3DView extends SurfaceView
         return entity;
     }
 
+    // ECLAIRAGE QUI SUIT LA CAMERA
     private void updateCameraLight(
             double cx,
             double cy,
             double cz) {
 
-        if (engine == null || cameraLightEntity == 0) {
+        if (engine == null || cameraLightEntity == 0)
             return;
-        }
 
-        LightManager manager = engine.getLightManager();
+        LightManager manager =
+                engine.getLightManager();
 
         int instance =
                 manager.getInstance(cameraLightEntity);
@@ -356,6 +387,7 @@ public class Car3DView extends SurfaceView
         );
     }
 
+    // CHARGEMENT BMW GLB
     private void loadCarModel() throws Exception {
 
         materialProvider =
@@ -375,7 +407,7 @@ public class Car3DView extends SurfaceView
 
         if (asset == null) {
             throw new IllegalStateException(
-                    "Modele GLB non reconnu"
+                    "Fichier GLB non reconnu"
             );
         }
 
@@ -400,6 +432,7 @@ public class Car3DView extends SurfaceView
         updateModel();
     }
 
+    // LECTURE ASSET
     private ByteBuffer readAsset(String name)
             throws Exception {
 
@@ -432,9 +465,11 @@ public class Car3DView extends SurfaceView
         }
     }
 
+    // POSITIONNEMENT DU MODELE
     private void updateModel() {
 
-        if (asset == null || engine == null) return;
+        if (asset == null || engine == null)
+            return;
 
         float[] normalization = new float[16];
 
@@ -463,10 +498,15 @@ public class Car3DView extends SurfaceView
                 manager.getInstance(asset.getRoot());
 
         if (instance != 0) {
-            manager.setTransform(instance, normalization);
+
+            manager.setTransform(
+                    instance,
+                    normalization
+            );
         }
     }
 
+    // CAMERA 360 DEGRES
     private void updateCamera() {
 
         if (camera == null) return;
@@ -505,6 +545,7 @@ public class Car3DView extends SurfaceView
         updateCameraLight(cx, cy, cz);
     }
 
+    // RENDU
     private void drawFrame(long frameTimeNanos) {
 
         if (engine == null ||
@@ -532,6 +573,7 @@ public class Car3DView extends SurfaceView
             int height) {
 
         if (view != null) {
+
             view.setViewport(
                     new Viewport(
                             0,
@@ -577,17 +619,15 @@ public class Car3DView extends SurfaceView
     private static float pointerDistance(
             MotionEvent event) {
 
-        float dx =
-                event.getX(0) - event.getX(1);
-
-        float dy =
-                event.getY(0) - event.getY(1);
+        float dx = event.getX(0) - event.getX(1);
+        float dy = event.getY(0) - event.getY(1);
 
         return (float) Math.sqrt(
                 dx * dx + dy * dy
         );
     }
 
+    // ROTATION ET ZOOM TACTILE
     @Override
     public boolean onTouchEvent(MotionEvent event) {
 
