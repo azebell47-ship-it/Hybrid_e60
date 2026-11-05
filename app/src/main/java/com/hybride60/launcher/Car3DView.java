@@ -31,7 +31,7 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
-/** Diagnostic : rotation par camera orbitale, modele immobile. */
+/** Diagnostic: opaque black framebuffer clear, no post-processing, orbit camera. */
 public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
     private static final String TAG = "HybridE60";
 
@@ -80,6 +80,12 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                 com.google.android.filament.gltfio.Gltfio.init();
                 engine = Engine.create();
                 renderer = engine.createRenderer();
+                // Force an opaque black clear at the start of every frame.
+                Renderer.ClearOptions clearOptions = new Renderer.ClearOptions();
+                clearOptions.clear = true;
+                clearOptions.discard = true;
+                clearOptions.clearColor = new float[]{0f, 0f, 0f, 1f};
+                renderer.setClearOptions(clearOptions);
                 scene = engine.createScene();
                 view = engine.createView();
 
@@ -91,7 +97,7 @@ public class Car3DView extends SurfaceView implements SurfaceHolder.Callback {
                 // Fully opaque output: every new frame replaces the previous image.
                 view.setBlendMode(View.BlendMode.OPAQUE);
                 // Diagnostic: désactiver les effets temporels et le post-traitement.
-                view.setPostProcessingEnabled(true);
+                view.setPostProcessingEnabled(false);
 
                 lightEntity = EntityManager.get().create();
                 new LightManager.Builder(LightManager.Type.SUN)
